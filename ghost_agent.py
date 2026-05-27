@@ -191,6 +191,11 @@ def execute_json_command(data):
             pyautogui.typewrite(text)
         elif action == "press" and key:
             pyautogui.press(key)
+        elif action == "run":
+            cmd = data.get("command")
+            if cmd:
+                import subprocess
+                subprocess.Popen(cmd, shell=True)
     except Exception as e:
         print_log(f"Failed to execute JSON command: {e}")
 
