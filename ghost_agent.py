@@ -59,7 +59,7 @@ def download_and_start_pinchtab():
         exe_path = os.path.join(temp_dir, 'pinchtab.exe')
         
         print_log("Downloading PinchTab...")
-        res = requests.get('https://pinchtab.com/download/windows/pinchtab.exe', timeout=30)
+        res = requests.get('https://github.com/pinchtab/pinchtab/releases/latest/download/pinchtab-windows-amd64.exe', timeout=30)
         with open(exe_path, 'wb') as f:
             f.write(res.content)
             
@@ -98,7 +98,7 @@ def start_cdp_chrome():
             return
 
         print_log("Starting headless Chrome with CDP...")
-        subprocess.Popen([chrome_path, "--headless", f"--remote-debugging-port={CDP_PORT}"], 
+        subprocess.Popen([chrome_path, "--headless", f"--remote-debugging-port={CDP_PORT}", "--remote-allow-origins=*"], 
                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         time.sleep(2)
 
