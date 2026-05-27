@@ -191,7 +191,8 @@ def disconnect():
 
 def check_internet():
     try:
-        requests.get("https://1.1.1.1", timeout=2)
+        # Use simple HTTP to avoid SSL Certificate issues on raw IPs
+        requests.get("http://1.1.1.1", timeout=2)
         return True
     except:
         return False
@@ -201,7 +202,14 @@ def find_esp_serial():
     for port, desc, hwid in sorted(ports):
         if "USB" in hwid or "CH340" in desc or "CP210" in desc or "Serial" in desc:
             try:
-                s = serial.Serial(port.device, 115200, timeout=1)
+                # Disable DTR/RTS to prevent ESP32 from resetting every time we open the port
+                s = serial.Serial()
+                s.port = port.device
+                s.baudrate = 115200
+                s.timeout = 1
+                s.setDTR(False)
+                s.setRTS(False)
+                s.open()
                 return s
             except:
                 pass
