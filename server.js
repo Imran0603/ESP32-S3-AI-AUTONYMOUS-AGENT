@@ -151,7 +151,7 @@ async function processAIScreenshot(imageBase64, customPrompt = null) {
   isAIBusy = true;
   try {
     let result = null;
-    const promptText = customPrompt || "Analyze this screen and determine the next best action. If no obvious goal, respond with action='nothing'. Respond in STRICT JSON format: {\"action\": \"move\"|\"click\"|\"type\"|\"press\"|\"nothing\", \"x\": integer, \"y\": integer, \"text\": \"string for type\", \"key\": \"enter/esc/etc\"}. Example: {\"action\":\"click\",\"x\":500,\"y\":500}";
+    const promptText = customPrompt || "Analyze this screen and determine the next best action. If interacting with a web browser, use PinchTab commands like: {\"action\": \"pinchtab_navigate\", \"url\": \"https://...\"} or {\"action\": \"pinchtab_click\", \"selector\": \"#login-btn\"} or {\"action\": \"pinchtab_type\", \"selector\": \"#username\", \"text\": \"admin\"}. Otherwise, for general desktop use: {\"action\": \"move\"|\"click\"|\"type\"|\"press\"|\"nothing\", \"x\": integer, \"y\": integer, \"text\": \"string for type\", \"key\": \"enter/esc/etc\"}. Respond in STRICT JSON format only.";
 
     if (aiConfig.provider === 'openai') {
       const openai = new OpenAI({ apiKey: aiConfig.apiKey });

