@@ -11,13 +11,26 @@ try:
 except ImportError:
     print("Installing required packages...")
     import subprocess
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "pillow", "python-socketio", "requests", "websocket-client", "pyautogui"])
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "pillow", "python-socketio", "requests", "websocket-client", "pyautogui", "pyserial"])
     from PIL import ImageGrab
     import pyautogui
     import requests
     import websocket
     import json
     import os
+    import serial
+    import serial.tools.list_ports
+    from PIL import ImageGrab
+    import pyautogui
+    import requests
+    import websocket
+    import json
+    import os
+try:
+    import serial
+    import serial.tools.list_ports
+except ImportError:
+    pass
     
 pyautogui.FAILSAFE = False
 
@@ -176,11 +189,36 @@ def execute_json_command(data):
 def disconnect():
     print_log("Disconnected from server.")
 
+def check_internet():
+    try:
+        requests.get("https://1.1.1.1", timeout=2)
+        return True
+    except:
+        return False
+
+def find_esp_serial():
+    ports = serial.tools.list_ports.comports()
+    for port, desc, hwid in sorted(ports):
+        if "USB" in hwid or "CH340" in desc or "CP210" in desc or "Serial" in desc:
+            try:
+                s = serial.Serial(port.device, 115200, timeout=1)
+                return s
+            except:
+                pass
+    return None
+
 def send_screenshots():
     """Background thread to capture screen and send to server."""
     global running
     while running:
-        if sio.connected:
+        internet_up = check_internet()
+        if internet_up and not sio.connected:
+            try:
+                sio.connect(SERVER_URL)
+            except:
+                pass
+
+        if sio.connected and internet_up:
             try:
                 # Capture screen
                 screenshot = ImageGrab.grab()
@@ -195,6 +233,40 @@ def send_screenshots():
                 sio.emit('screenshot_data', img_str)
             except Exception as e:
                 print_log(f"Screenshot error: {e}")
+        elif not internet_up:
+            # HYBRID FALLBACK
+            esp_port = find_esp_serial()
+            if esp_port:
+                try:
+                    # Check for pending commands from ESP32 first
+                    if esp_port.in_waiting > 0:
+                        line = esp_port.readline().decode('utf-8', errors='ignore').strip()
+                        if line.startswith("CMD:"):
+                            cmd_str = line[4:]
+                            try:
+                                if "{" in cmd_str and "}" in cmd_str:
+                                    execute_json_command(json.loads(cmd_str))
+                                else:
+                                    execute_command(cmd_str)
+                            except Exception as ex:
+                                print_log(f"Hybrid CMD execution failed: {ex}")
+
+                    # Capture and send tiny screenshot over serial
+                    screenshot = ImageGrab.grab()
+                    buffer = io.BytesIO()
+                    screenshot.thumbnail((640, 360)) # Extra small for serial
+                    screenshot.save(buffer, format="JPEG", quality=30)
+                    img_str = base64.b64encode(buffer.getvalue()).decode("utf-8")
+                    
+                    esp_port.write(b"IMG_START\n")
+                    chunk_size = 64
+                    for i in range(0, len(img_str), chunk_size):
+                        esp_port.write(img_str[i:i+chunk_size].encode())
+                    esp_port.write(b"\nIMG_END\n")
+                except Exception as e:
+                    print_log(f"Hybrid Serial Error: {e}")
+                finally:
+                    esp_port.close()
         
         time.sleep(SCREENSHOT_INTERVAL)
 
