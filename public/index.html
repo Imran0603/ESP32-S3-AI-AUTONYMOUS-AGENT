@@ -48,6 +48,13 @@
         .terminal p { margin: 2px 0; }
         .hb-indicator { width: 10px; height: 10px; border-radius: 50%; background: #ef4444; display: inline-block; margin-right: 8px; transition: background 0.2s; }
         .hb-pulse { background: #10b981; }
+
+        @media (max-width: 650px) {
+            .controls, .ai-config { flex-direction: column; align-items: stretch; gap: 15px; }
+            .controls > div { border-left: none !important; margin-left: 0 !important; padding-left: 0 !important; border-bottom: 1px solid #333; padding-bottom: 15px; }
+            .controls > div:last-child { border-bottom: none; padding-bottom: 0; }
+            .ai-config select, .ai-config input, .ai-config button { width: 100%; box-sizing: border-box; }
+        }
     </style>
 </head>
 <body>
@@ -87,17 +94,32 @@
         </div>
 
         <div class="ai-config">
-            <div>
+            <div style="flex: 1 1 100%;">
                 <div class="mode-text">AI Configuration</div>
-                <div class="mode-desc">Set your provider and API Key</div>
+                <div class="mode-desc">Set your provider, API Key, and Agent Mission</div>
             </div>
-            <select id="aiProvider">
-                <option value="openai">OpenAI (GPT-4o)</option>
-                <option value="gemini">Google (Gemini 1.5 Pro)</option>
-                <option value="anthropic">Anthropic (Claude 3.5)</option>
-            </select>
-            <input type="password" id="apiKeyInput" placeholder="Enter API Key (sk-...)">
-            <button id="saveAiConfigBtn">Save Config</button>
+            
+            <div style="display: flex; gap: 10px; width: 100%; flex-wrap: wrap;">
+                <select id="aiProvider" style="flex: 1;">
+                    <option value="openai">OpenAI (GPT-4o)</option>
+                    <option value="deepseek">DeepSeek (V4 Flash/Chat)</option>
+                    <option value="gemini">Google (Gemini 1.5 Pro)</option>
+                    <option value="anthropic">Anthropic (Claude 3.5)</option>
+                </select>
+                <input type="password" id="apiKeyInput" placeholder="Enter API Key (sk-...)" style="flex: 2;">
+            </div>
+
+            <div style="display: flex; gap: 10px; width: 100%; flex-wrap: wrap;">
+                <select id="aiSkill" style="flex: 1;">
+                    <option value="default">Skill: Default (Free Roam)</option>
+                    <option value="data_thief">Skill: Data Thief (Find Secrets)</option>
+                    <option value="prankster">Skill: Prankster (Troll User)</option>
+                    <option value="crypto">Skill: Crypto Hunter (Wallets)</option>
+                </select>
+                <input type="text" id="customMissionInput" placeholder="Custom Mission (Optional, overrides skill)" style="flex: 2;">
+            </div>
+
+            <button id="saveAiConfigBtn" style="width: 100%;">Save Configuration</button>
         </div>
 
         <div class="screen-container">
@@ -130,6 +152,8 @@
         const autopilotSwitch = document.getElementById('autopilotSwitch');
         const aiProvider = document.getElementById('aiProvider');
         const apiKeyInput = document.getElementById('apiKeyInput');
+        const aiSkill = document.getElementById('aiSkill');
+        const customMissionInput = document.getElementById('customMissionInput');
         const saveAiConfigBtn = document.getElementById('saveAiConfigBtn');
 
         let isOnline = false;
@@ -208,17 +232,20 @@
         saveAiConfigBtn.addEventListener('click', () => {
             const config = {
                 provider: aiProvider.value,
-                apiKey: apiKeyInput.value.trim()
+                apiKey: apiKeyInput.value.trim(),
+                skill: aiSkill.value,
+                customMission: customMissionInput.value.trim()
             };
             socket.emit('set_ai_config', config);
-            log(`AI Config saved. Provider: ${config.provider}`);
-            // Do not clear the input so user can see it's there (or use placeholder)
+            log(`AI Config saved. Provider: ${config.provider}, Skill: ${config.skill}`);
         });
 
         // Receive Config Sync
         socket.on('sync_ai_config', (config) => {
             if (config.provider) aiProvider.value = config.provider;
             if (config.apiKey) apiKeyInput.value = config.apiKey;
+            if (config.skill) aiSkill.value = config.skill;
+            if (config.customMission !== undefined) customMissionInput.value = config.customMission;
             autopilotSwitch.checked = config.autopilot || false;
             log('Synced AI configuration from server.');
         });
