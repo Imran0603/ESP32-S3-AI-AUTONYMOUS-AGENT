@@ -218,10 +218,7 @@ async function processAIScreenshot(imageBase64, customPrompt = null) {
         model: "deepseek-chat",
         messages: [
           { role: "system", content: "You are an autonomous computer control agent. Respond only with valid JSON." },
-          { role: "user", content: [
-            { type: "text", text: promptText },
-            { type: "image_url", image_url: { url: `data:image/jpeg;base64,${imageBase64}` } }
-          ]}
+          { role: "user", content: promptText + "\n[Note: You are currently operating blind. The user's screen is not visible to you. Generate logical generic actions like Win+R or browser navigation.]" }
         ],
         response_format: { type: "json_object" }
       });
