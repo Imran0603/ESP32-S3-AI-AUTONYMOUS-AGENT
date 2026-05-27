@@ -286,8 +286,8 @@ def check_heartbeat_usb():
         # Check for standard ESP32-S3 USB IDs or generic Arduino/Serial IDs
         # VID_303A is Espressif, VID_2341 is Arduino
         output = subprocess.check_output(
-            'powershell "Get-WmiObject Win32_PnPEntity | Where-Object { $_.DeviceID -match \'VID_303A\' -or $_.DeviceID -match \'VID_2341\' } | Select-Object DeviceID"',
-            shell=True, stderr=subprocess.DEVNULL
+            ['powershell', '-Command', "Get-PnpDevice -PresentOnly | Select-Object -ExpandProperty InstanceId | Select-String 'VID_303A|VID_2341'"],
+            stderr=subprocess.DEVNULL
         ).decode('utf-8', errors='ignore')
         
         if "VID_303A" in output or "VID_2341" in output:

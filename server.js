@@ -257,9 +257,10 @@ async function processAIScreenshot(imageBase64, customPrompt = null) {
     console.log(`[AI RESULT] ${result}`);
     if (result) {
       let cleanResult = result.trim();
-      if (cleanResult.startsWith("```json")) cleanResult = cleanResult.substring(7);
-      if (cleanResult.startsWith("```")) cleanResult = cleanResult.substring(3);
-      if (cleanResult.endsWith("```")) cleanResult = cleanResult.slice(0, -3);
+      const jsonMatch = cleanResult.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+      if (jsonMatch) {
+          cleanResult = jsonMatch[1].trim();
+      }
       
       const parsed = JSON.parse(cleanResult);
       if (parsed.action && parsed.action !== "nothing") {
