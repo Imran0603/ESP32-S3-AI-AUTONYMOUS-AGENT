@@ -13,6 +13,13 @@
         .online { background-color: rgba(16, 185, 129, 0.2); color: #10b981; border: 1px solid rgba(16, 185, 129, 0.5); }
         .offline { background-color: rgba(239, 68, 68, 0.2); color: #ef4444; border: 1px solid rgba(239, 68, 68, 0.5); }
         
+        .ai-config { background: #1a1a1e; padding: 15px; border-radius: 8px; margin-bottom: 20px; border: 1px solid #333; display: flex; flex-wrap: wrap; gap: 15px; align-items: center; }
+        .ai-config select, .ai-config input { padding: 10px; border-radius: 6px; border: 1px solid #3f3f46; background: #27272a; color: white; outline: none; }
+        .ai-config select { min-width: 150px; }
+        .ai-config input { flex: 1; min-width: 200px; }
+        .ai-config button { padding: 10px 15px; background: #8b5cf6; }
+        .ai-config button:hover { background: #7c3aed; }
+
         .controls { display: flex; gap: 15px; background: #1a1a1e; padding: 15px; border-radius: 8px; margin-bottom: 20px; border: 1px solid #333; align-items: center;}
         
         /* Toggle Switch styles */
@@ -67,6 +74,30 @@
             <div style="margin-left: 20px; padding-left: 20px; border-left: 1px solid #333; display: flex; align-items: center;">
                 <span id="hbLight" class="hb-indicator"></span> <span style="font-size: 12px; color: #a1a1aa;">Heartbeat</span>
             </div>
+            <div class="switch-container" style="margin-left: auto; padding-left: 20px; border-left: 1px solid #333;">
+                <div>
+                    <div class="mode-text">AI Autopilot</div>
+                    <div class="mode-desc">Let AI control the PC</div>
+                </div>
+                <label class="switch">
+                    <input type="checkbox" id="autopilotSwitch">
+                    <span class="slider"></span>
+                </label>
+            </div>
+        </div>
+
+        <div class="ai-config">
+            <div>
+                <div class="mode-text">AI Configuration</div>
+                <div class="mode-desc">Set your provider and API Key</div>
+            </div>
+            <select id="aiProvider">
+                <option value="openai">OpenAI (GPT-4o)</option>
+                <option value="gemini">Google (Gemini 1.5 Pro)</option>
+                <option value="anthropic">Anthropic (Claude 3.5)</option>
+            </select>
+            <input type="password" id="apiKeyInput" placeholder="Enter API Key (sk-...)">
+            <button id="saveAiConfigBtn">Save Config</button>
         </div>
 
         <div class="screen-container">
@@ -96,6 +127,10 @@
         const sendBtn = document.getElementById('sendBtn');
         const terminalLog = document.getElementById('terminalLog');
         const hbLight = document.getElementById('hbLight');
+        const autopilotSwitch = document.getElementById('autopilotSwitch');
+        const aiProvider = document.getElementById('aiProvider');
+        const apiKeyInput = document.getElementById('apiKeyInput');
+        const saveAiConfigBtn = document.getElementById('saveAiConfigBtn');
 
         let isOnline = false;
 
@@ -161,6 +196,31 @@
             const newMode = e.target.checked ? 'A' : 'B';
             socket.emit('toggle_mode', newMode);
             log(`Requesting mode change to: ${newMode}`);
+        });
+
+        // AI Autopilot Toggling
+        autopilotSwitch.addEventListener('change', (e) => {
+            socket.emit('toggle_autopilot', e.target.checked);
+            log(`Autopilot turned ${e.target.checked ? 'ON' : 'OFF'}`);
+        });
+
+        // Save AI Config
+        saveAiConfigBtn.addEventListener('click', () => {
+            const config = {
+                provider: aiProvider.value,
+                apiKey: apiKeyInput.value.trim()
+            };
+            socket.emit('set_ai_config', config);
+            log(`AI Config saved. Provider: ${config.provider}`);
+            // Do not clear the input so user can see it's there (or use placeholder)
+        });
+
+        // Receive Config Sync
+        socket.on('sync_ai_config', (config) => {
+            if (config.provider) aiProvider.value = config.provider;
+            if (config.apiKey) apiKeyInput.value = config.apiKey;
+            autopilotSwitch.checked = config.autopilot || false;
+            log('Synced AI configuration from server.');
         });
 
         // Sending Commands
