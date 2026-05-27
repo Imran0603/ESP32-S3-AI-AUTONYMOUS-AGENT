@@ -2,6 +2,7 @@ const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
 const path = require('path');
+const fs = require('fs');
 const cors = require('cors');
 const { OpenAI } = require('openai');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
@@ -175,8 +176,14 @@ async function processAIScreenshot(imageBase64, customPrompt = null) {
   isAIBusy = true;
   try {
     let result = null;
-    const basePrompt = "Analyze this screen and determine the next best action. If interacting with a web browser, use PinchTab commands like: {\"action\": \"pinchtab_navigate\", \"url\": \"https://...\"} or {\"action\": \"pinchtab_click\", \"selector\": \"#login-btn\"} or {\"action\": \"pinchtab_type\", \"selector\": \"#username\", \"text\": \"admin\"}. Otherwise, for general desktop use: {\"action\": \"move\"|\"click\"|\"type\"|\"press\"|\"nothing\", \"x\": integer, \"y\": integer, \"text\": \"string for type\", \"key\": \"enter/esc/etc\"}. Respond in STRICT JSON format only.";
-    
+    let basePrompt = "";
+    try {
+      basePrompt = fs.readFileSync(path.join(__dirname, 'ai_brain.md'), 'utf-8');
+    } catch (err) {
+      console.error("Failed to read ai_brain.md:", err);
+      basePrompt = "Analyze this screen and determine the next best action in STRICT JSON format.";
+    }
+
     let missionInstruction = "";
     if (aiConfig.customMission && aiConfig.customMission.trim() !== '') {
         missionInstruction = `YOUR CURRENT MISSION: ${aiConfig.customMission}. Prioritize actions that achieve this mission over aimless browsing.`;
