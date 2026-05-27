@@ -21,7 +21,7 @@ const io = new Server(server, {
 
 app.use(cors());
 app.use(express.static(path.join(__dirname, 'public')));
-app.use(express.json());
+app.use(express.json({ limit: '50mb' })); // Naikkan had saiz JSON untuk screenshot
 
 // State Tracking
 let agentConnected = false;
@@ -32,15 +32,15 @@ let lastScreenshot = null;
 let isAIBusy = false;
 let hybridCommandQueue = [];
 
-// API Endpoint to check status (optional)
+// API Endpoint to check status
 app.get('/api/status', (req, res) => {
-  res.json({
   res.json({
     agentOnline: agentConnected,
     mode: currentMode
   });
 });
 
+// Hybrid Mode: Terima screenshot melalui HTTP POST (fallback jika WebSocket gagal)
 app.post('/api/hybrid_upload', (req, res) => {
   const { screenshot } = req.body;
   if (!screenshot) return res.status(400).send('Missing screenshot');
@@ -52,9 +52,10 @@ app.post('/api/hybrid_upload', (req, res) => {
     processAIScreenshot(screenshot);
   }
   
-  res.send({ status: 'ok' });
+  res.json({ status: 'ok' });
 });
 
+// Hybrid Mode: Agent ambil arahan yang tertunggak
 app.get('/api/hybrid_command', (req, res) => {
   if (hybridCommandQueue.length > 0) {
     const cmd = hybridCommandQueue.shift();
@@ -104,9 +105,7 @@ io.on('connection', (socket) => {
 
   // 2. Receiving Screenshot from Agent
   socket.on('screenshot_data', (data) => {
-    // data should be a base64 encoded image string
     lastScreenshot = data;
-    // Forward the screenshot to all connected web dashboards
     io.emit('new_screenshot', data);
     
     if (aiConfig.autopilot && !isAIBusy) {
@@ -116,8 +115,6 @@ io.on('connection', (socket) => {
 
   // 3. Receiving Heartbeat from Agent (Mod B)
   socket.on('heartbeat', () => {
-    // console.log(`[HEARTBEAT] Received from agent`);
-    // We could forward this to the dashboard if we want a visual indicator
     io.emit('heartbeat_received', Date.now());
   });
 

@@ -128,8 +128,8 @@
         </div>
 
         <div class="command-box">
-            <input type="text" id="cmdInput" placeholder="Type a command for the AI (e.g., 'click Chrome', 'type Hello')" disabled>
-            <button id="sendBtn" disabled>Send Command</button>
+            <input type="text" id="cmdInput" placeholder="Type a command for the AI (e.g., 'click Chrome', 'type Hello')">
+            <button id="sendBtn">Send Command</button>
         </div>
 
         <div class="terminal" id="terminalLog">
@@ -175,14 +175,12 @@
             if (isOnline) {
                 statusBadge.className = 'status-badge online';
                 statusBadge.textContent = '🟢 ONLINE';
-                cmdInput.disabled = false;
-                sendBtn.disabled = false;
+                cmdInput.placeholder = "Type a command for the AI (e.g., 'click Chrome')";
                 log('Ghost Agent is ONLINE.');
             } else {
                 statusBadge.className = 'status-badge offline';
                 statusBadge.textContent = '🔴 OFFLINE';
-                cmdInput.disabled = true;
-                sendBtn.disabled = true;
+                cmdInput.placeholder = "Type a command (Will be queued for Hybrid Mode)";
                 screenImage.style.display = 'none';
                 waitingText.style.display = 'block';
                 log('Ghost Agent went OFFLINE.');
@@ -253,7 +251,7 @@
         // Sending Commands
         const sendCommand = () => {
             const cmd = cmdInput.value.trim();
-            if (cmd && isOnline) {
+            if (cmd) { // Removed isOnline check to allow hybrid queueing
                 socket.emit('send_command', cmd);
                 log(`Sent command: ${cmd}`);
                 cmdInput.value = '';
