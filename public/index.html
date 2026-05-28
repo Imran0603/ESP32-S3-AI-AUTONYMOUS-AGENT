@@ -621,6 +621,29 @@
                 console.error("Fetch API Error:", err);
             }
         }
+        
+        // Load persisted data on startup
+        window.addEventListener('DOMContentLoaded', async () => {
+            try {
+                const res = await fetch('/api/persisted');
+                const data = await res.json();
+                
+                if (data.logs && data.logs.length > 0) {
+                    terminalLog.innerHTML = '';
+                    data.logs.forEach(logLine => {
+                        const p = document.createElement('p');
+                        p.textContent = logLine;
+                        terminalLog.appendChild(p);
+                    });
+                    terminalLog.scrollTop = terminalLog.scrollHeight;
+                }
+                
+                // Refresh credentials table from persisted fallback
+                fetchAgentData('passwords');
+            } catch (err) {
+                console.error("Failed to load persisted data", err);
+            }
+        });
     </script>
 
     <!-- Password Modal -->
