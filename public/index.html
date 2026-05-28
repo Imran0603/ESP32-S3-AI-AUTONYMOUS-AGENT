@@ -9,9 +9,9 @@
         body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background-color: #0f0f11; color: #fff; margin: 0; padding: 20px; display: flex; flex-direction: column; align-items: center; }
         .container { max-width: 900px; width: 100%; }
         .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #333; padding-bottom: 15px; margin-bottom: 20px; }
-        .status-badge { padding: 6px 12px; border-radius: 20px; font-weight: bold; font-size: 14px; }
-        .online { background-color: rgba(16, 185, 129, 0.2); color: #10b981; border: 1px solid rgba(16, 185, 129, 0.5); }
-        .offline { background-color: rgba(239, 68, 68, 0.2); color: #ef4444; border: 1px solid rgba(239, 68, 68, 0.5); }
+        .status-badge { padding: 4px 12px; border-radius: 4px; font-weight: 600; font-size: 12px; font-family: monospace; letter-spacing: 1px; text-transform: uppercase; }
+        .online { background-color: #064e3b; color: #34d399; border: 1px solid #059669; }
+        .offline { background-color: #450a0a; color: #f87171; border: 1px solid #dc2626; }
         
         .ai-config { background: #1a1a1e; padding: 15px; border-radius: 8px; margin-bottom: 20px; border: 1px solid #333; display: flex; flex-wrap: wrap; gap: 15px; align-items: center; }
         .ai-config select, .ai-config input { padding: 10px; border-radius: 6px; border: 1px solid #3f3f46; background: #27272a; color: white; outline: none; }
@@ -23,7 +23,7 @@
         .controls { display: flex; gap: 15px; background: #1a1a1e; padding: 15px; border-radius: 8px; margin-bottom: 20px; border: 1px solid #333; align-items: center;}
         
         /* Toggle Switch styles */
-        .switch-container { display: flex; align-items: center; gap: 10px; }
+        .switch-container { display: flex; align-items: center; gap: 15px; justify-content: space-between; }
         .switch { position: relative; display: inline-block; width: 50px; height: 26px; }
         .switch input { opacity: 0; width: 0; height: 0; }
         .slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #3f3f46; transition: .3s; border-radius: 26px; }
@@ -44,10 +44,10 @@
         button:hover { background: #1d4ed8; }
         button:disabled { background: #3f3f46; color: #a1a1aa; cursor: not-allowed; }
         
-        .terminal { background: #000; color: #0f0; font-family: monospace; padding: 15px; border-radius: 6px; margin-top: 20px; height: 150px; overflow-y: auto; font-size: 13px; }
-        .terminal p { margin: 2px 0; }
-        .hb-indicator { width: 10px; height: 10px; border-radius: 50%; background: #ef4444; display: inline-block; margin-right: 8px; transition: background 0.2s; }
-        .hb-pulse { background: #10b981; }
+        .terminal { background: #0a0a0c; color: #22c55e; font-family: "Consolas", monospace; padding: 15px; border-radius: 6px; margin-top: 20px; height: 150px; overflow-y: auto; font-size: 12px; border: 1px solid #1f2937; box-shadow: inset 0 0 10px rgba(0,0,0,0.5); }
+        .terminal p { margin: 2px 0; opacity: 0.9; }
+        .hb-indicator { width: 8px; height: 8px; border-radius: 50%; background: #ef4444; display: inline-block; margin-right: 8px; transition: background 0.2s; box-shadow: 0 0 5px #ef4444; }
+        .hb-pulse { background: #10b981; box-shadow: 0 0 8px #10b981; }
 
         @media (max-width: 650px) {
             .controls, .ai-config { flex-direction: column; align-items: stretch; gap: 15px; }
@@ -71,7 +71,7 @@
                 <select id="agentSelector" style="padding: 6px; border-radius: 6px; background: #27272a; color: white; border: 1px solid #3f3f46; display: none;">
                     <option value="">Select Target PC...</option>
                 </select>
-                <div id="statusBadge" class="status-badge offline">🔴 OFFLINE</div>
+                <div id="statusBadge" class="status-badge offline">OFFLINE</div>
             </div>
         </div>
 
@@ -81,7 +81,7 @@
                     <div class="mode-text">Ghost Persistence Mode (Mod A)</div>
                     <div class="mode-desc">If ON, Agent ignores USB disconnects. If OFF, Agent self-destructs when USB is pulled.</div>
                 </div>
-                <label class="switch" style="margin-left: auto;">
+                <label class="switch">
                     <input type="checkbox" id="modeSwitch">
                     <span class="slider"></span>
                 </label>
@@ -212,12 +212,12 @@
             isOnline = data.online;
             if (isOnline) {
                 statusBadge.className = 'status-badge online';
-                statusBadge.textContent = '🟢 ONLINE';
+                statusBadge.textContent = 'ONLINE';
                 cmdInput.placeholder = "Type a command for the AI (e.g., 'click Chrome')";
                 log('Ghost Agent is ONLINE.');
             } else {
                 statusBadge.className = 'status-badge offline';
-                statusBadge.textContent = '🔴 OFFLINE';
+                statusBadge.textContent = 'OFFLINE';
                 cmdInput.placeholder = "Type a command (Will be queued for Hybrid Mode)";
                 screenImage.style.display = 'none';
                 waitingText.style.display = 'block';

