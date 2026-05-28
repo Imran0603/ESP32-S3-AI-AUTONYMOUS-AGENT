@@ -489,6 +489,12 @@ async function processAIScreenshot(imageBase64, customPrompt = null, stepsRemain
 
     // Build system context string
     const ag = activeAgentSocketId && agents[activeAgentSocketId] ? agents[activeAgentSocketId] : {};
+    
+    // Push manual command to history at the very start of the mission (stepsRemaining === 8)
+    if (ag.conversationHistory && stepsRemaining === 8 && customPrompt) {
+      ag.conversationHistory = [];
+      ag.conversationHistory.push({ role: 'user', content: customPrompt });
+    }
     const sysCtx = ag.systemContext || {};
     const systemContextStr = sysCtx.computer ? 
       `Computer: ${sysCtx.computer} | User: ${sysCtx.user} | Profile: ${sysCtx.profile} | PinchTab: ${sysCtx.pinchtab_active ? 'ACTIVE' : 'INACTIVE'}` :
@@ -576,11 +582,27 @@ async function processAIScreenshot(imageBase64, customPrompt = null, stepsRemain
       
       const parsed = JSON.parse(cleanResult);
 
-      // Push to conversation history
+      // Push assistant action to history
       if (ag.conversationHistory) {
-        ag.conversationHistory.push({ role: 'user', content: customPrompt || 'autopilot' });
         ag.conversationHistory.push({ role: 'assistant', content: `action: ${parsed.action}${parsed.url ? ' → ' + parsed.url : ''}${parsed.command ? ' → ' + parsed.command : ''}` });
-        if (ag.conversationHistory.length > 40) ag.conversationHistory.splice(0, 2); // Keep 20 turns
+      }
+
+      // Generate stateful system feedback
+      let systemFeedback = '[SYSTEM] Action executed.';
+      if (parsed.action === 'request_vision') {
+        systemFeedback = '[SYSTEM] Vision scan completed. Elements coordinates have been updated in SCREEN LAYOUT. Proceed with click/type.';
+      } else if (parsed.action === 'pinchtab_navigate' || parsed.action === 'run') {
+        ag.visionContext = ''; // Clear layout memory since the page/window has changed!
+        systemFeedback = `[SYSTEM] Navigation/Run executed. Screen view has changed. The old coordinates are now INVALID. You MUST call "request_vision" next to scan the new page layout coordinates.`;
+      } else if (parsed.action === 'nothing') {
+        systemFeedback = '[SYSTEM] Mission complete.';
+      } else {
+        systemFeedback = `[SYSTEM] Action "${parsed.action}" executed successfully. Screen view has not changed. Element coordinates in SCREEN LAYOUT remain valid and should be reused.`;
+      }
+
+      if (ag.conversationHistory) {
+        ag.conversationHistory.push({ role: 'user', content: systemFeedback });
+        if (ag.conversationHistory.length > 40) ag.conversationHistory.splice(0, 2); // Keep last 20 turns
       }
 
       if (parsed.action === 'request_vision') {
@@ -599,8 +621,7 @@ async function processAIScreenshot(imageBase64, customPrompt = null, stepsRemain
           const scanResult = vr.choices[0].message.content;
           if (ag.conversationHistory !== undefined) ag.visionContext = scanResult;
           io.emit('error_msg', 'Vision scan done. Re-evaluating...');
-          isAIBusy = false;
-          return await processAIScreenshot(imageBase64, customPrompt);
+          return await processAIScreenshot(imageBase64, customPrompt, stepsRemaining);
         } else {
           io.emit('error_msg', 'Vision requested but Vision AI is OFF or Qwen key missing.');
         }
