@@ -125,7 +125,7 @@ const SKILLS = {
     'Step 1: {"action":"pinchtab_navigate","url":"https://example.com"}'
   ],
   "Download file": [
-    'Step 1: {"action":"run","command":"powershell -Command \\"Invoke-WebRequest -Uri \'URL\' -OutFile \'PATH\\'\\""}' 
+    'Step 1: {"action":"run","command":"powershell -Command \\"Invoke-WebRequest -Uri \'URL\' -OutFile \'PATH\'\\""}' 
   ],
   "Screenshot": [
     '{"action":"hotkey","keys":["win","shift","s"]}'
