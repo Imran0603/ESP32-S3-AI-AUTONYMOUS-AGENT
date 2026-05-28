@@ -32,7 +32,7 @@ let agents = {};
 // }
 let activeAgentSocketId = null;
 let currentMode = 'B';
-let aiConfig = { qwenKey: '', deepseekKey: '', autopilot: false, useVision: false, skill: 'default', customMission: '' };
+let aiConfig = { qwenKey: 'sk-c03ee9a5ceff42ac8a7d8f4476457475', deepseekKey: 'sk-ba786a1b6d94413d9dafe310ef44bcdf', autopilot: false, useVision: true, skill: 'default', customMission: '' };
 let lastScreenshot = null;
 let isAIBusy = false;
 let hybridCommandQueue = [];
