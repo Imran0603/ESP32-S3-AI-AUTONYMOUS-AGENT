@@ -173,21 +173,22 @@ const DECISION_TREE = `
 BEFORE choosing an action, follow this logic:
 
 1. WEB TASK? (open URL, search, click webpage element)
-   → Use pinchtab_navigate or pinchtab_js. COST: FREE.
-   → Need page elements? → pinchtab_get_dom first, then pinchtab_click/pinchtab_type.
-   → YouTube lagu? → pinchtab_navigate to search URL, then pinchtab_js to click first result.
+   → Use pinchtab_navigate or pinchtab_js if browser automation works. COST: FREE.
+   → Need page elements? → pinchtab_get_dom first.
+   → SMART HYBRID FALLBACK: If DOM context is empty or 0 chars, OR if pinchtab_get_dom was already tried and failed, DO NOT call it again!
+     Instead, immediately fall back to DESKTOP UI automation: Call request_vision to scan the screen for coordinates, then use click(x,y) and type/press keys directly on the browser window!
 
 2. SYSTEM TASK? (open app, run command, manage files)
    → Use "run" action. COST: FREE.
 
-3. DESKTOP UI TASK? (click buttons in native apps like Notepad, Settings)
-   → Have Vision coordinates? → Use click/move with (x,y). FREE.
-   → No coordinates? → Use request_vision. EXPENSIVE — only when absolutely needed!
+3. DESKTOP UI TASK / FALLBACK? (click buttons in native apps or automate browser visually)
+   → Have Vision coordinates? → Use click/move with (x,y) and type/press key actions. FREE.
+   → No coordinates? → Use request_vision. EXPENSIVE — only call when coordinates are unknown!
 
 4. MISSION COMPLETE?
    → Use "nothing" with reason.
 
-GOLDEN RULE: NEVER use request_vision for web tasks. PinchTab + DOM = FREE and BETTER.
+GOLDEN RULE: Try PinchTab + DOM first because it is FREE. If it fails (DOM empty/0 chars), IMMEDIATELY fall back to request_vision and standard click/type.
 GOLDEN RULE: NEVER use "run start chrome". ALWAYS use pinchtab_navigate.
 GOLDEN RULE: For YouTube, encode spaces as + in URL: search_query=beauty+and+a+beat
 `;
@@ -196,13 +197,13 @@ GOLDEN RULE: For YouTube, encode spaces as + in URL: search_query=beauty+and+a+b
 const HARD_RULES = [
   "RESPOND WITH ONLY ONE JSON OBJECT. No text, no markdown, no explanation.",
   "NEVER use 'run start chrome'. ALWAYS use pinchtab_navigate for URLs.",
-  "NEVER use request_vision for web tasks. Use pinchtab_get_dom instead.",
+  "NEVER call pinchtab_get_dom repeatedly if it returns 0 chars or empty DOM.",
+  "If DOM_CONTEXT is empty/none/0 chars, and you need to interact with the page, immediately call request_vision to scan the screen layout.",
   "NEVER repeat the same failed action. Try something different.",
   "For YouTube searches, encode spaces as + in the URL query parameter.",
-  "If DOM_CONTEXT is empty and you need web interaction, use pinchtab_get_dom first.",
-  "If you already navigated to a search results page, click the first result next.",
+  "If you already navigated to a page and DOM is empty, call request_vision to find where to click.",
   "If user asks to play a song, navigate to YouTube search results URL directly.",
-  "After navigating, WAIT for next turn, then click the result using pinchtab_js."
+  "After navigating, if DOM is available click using pinchtab_js. If DOM is empty, request_vision to locate the first video and click it via coordinates."
 ];
 
 // ═══════════════════════════════════════════════════════════════
