@@ -693,13 +693,15 @@ def start_cdp_chrome():
             print_log("Chrome/Edge not found.")
             return
             
-        # PAKSA CHROME DITUTUP SUPAYA BOLEH DIBUKA SEMULA DALAM DEBUG MODE
-        subprocess.run(["taskkill", "/F", "/IM", "chrome.exe"], capture_output=True)
-        subprocess.run(["taskkill", "/F", "/IM", "msedge.exe"], capture_output=True)
-        time.sleep(1)
-        
         subprocess.Popen(
-            [chrome_path, f"--remote-debugging-port={CDP_PORT}", "--remote-allow-origins=*"],
+            [
+                chrome_path, 
+                f"--remote-debugging-port={CDP_PORT}", 
+                "--remote-allow-origins=*",
+                f"--user-data-dir={os.path.join(os.environ.get('TEMP', ''), 'chrome_debug_profile')}",
+                "--no-first-run",
+                "--no-default-browser-check"
+            ],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
         )
         time.sleep(3)
