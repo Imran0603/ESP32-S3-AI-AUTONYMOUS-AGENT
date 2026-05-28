@@ -536,14 +536,14 @@ async function processAIScreenshot(imageBase64, customPrompt = null, stepsRemain
           { role: 'user', content: promptText + '\n[Note: You are blind unless you call request_vision or pinchtab_get_dom. Use pinchtab_get_dom first for web tasks.]' }
         ],
         response_format: { type: 'json_object' },
-        max_tokens: 512
+        max_tokens: 1024
       });
       result = response.choices[0].message.content;
       
     } else if (primaryProvider === 'qwen') {
       const qwen = new OpenAI({ apiKey: aiConfig.qwenKey, baseURL: 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1' });
       const response = await qwen.chat.completions.create({
-        model: 'qwen3-vl-plus',
+        model: 'qwen-vl-plus',
         messages: [
           { role: 'system', content: 'You are GhostMind, an autonomous agent. Respond ONLY with valid JSON.' },
           { role: 'user', content: [
@@ -552,7 +552,7 @@ async function processAIScreenshot(imageBase64, customPrompt = null, stepsRemain
           ]}
         ],
         response_format: { type: 'json_object' },
-        max_tokens: 512
+        max_tokens: 1024
       });
       result = response.choices[0].message.content;
     }
