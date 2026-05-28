@@ -357,6 +357,10 @@ io.on('connection', (socket) => {
 
   // 4. Web Dashboard sends a command to the Agent
   socket.on('send_command', async (cmdString) => {
+    if (isAIBusy) {
+      socket.emit('error_msg', 'AI is busy processing a command. Please wait.');
+      return;
+    }
     let targetScreenshot = activeAgentSocketId && agents[activeAgentSocketId] ? agents[activeAgentSocketId].lastScreenshot : lastScreenshot;
       
     if ((aiConfig.qwenKey || aiConfig.deepseekKey) && targetScreenshot) {
@@ -462,6 +466,7 @@ const PORT = process.env.PORT || 3000;
 async function processAIScreenshot(imageBase64, customPrompt = null, stepsRemaining = 8) {
   if (!aiConfig.qwenKey && !aiConfig.deepseekKey) return;
   isAIBusy = true;
+  let shouldKeepBusy = false;
   try {
     let result = null;
     let aiBrain;
@@ -606,14 +611,14 @@ async function processAIScreenshot(imageBase64, customPrompt = null, stepsRemain
           // ═══════════════════════════════════════════════════
           if (customPrompt && stepsRemaining > 0) {
             const nextStep = stepsRemaining - 1;
+            shouldKeepBusy = true; // Lock remains active through the timeout
             setTimeout(async () => {
-              isAIBusy = false;
               // Get fresh screenshot from agent
               let freshScreenshot = agents[activeAgentSocketId] ? agents[activeAgentSocketId].lastScreenshot : imageBase64;
               io.emit('error_msg', `[AUTO] Continuing mission... (${nextStep} steps left)`);
               await processAIScreenshot(freshScreenshot || imageBase64, customPrompt, nextStep);
             }, 4000); // Wait 4 seconds for action to complete
-            return; // Don't release isAIBusy yet, the loop will handle it
+            return;
           }
         } else {
           hybridCommandQueue.push(JSON.stringify(parsed));
@@ -627,7 +632,9 @@ async function processAIScreenshot(imageBase64, customPrompt = null, stepsRemain
     console.error('[AI ERROR]', err);
     io.emit('error_msg', `AI Error: ${err.message}. Raw output: ${result || 'empty'}`);
   } finally {
-    isAIBusy = false;
+    if (!shouldKeepBusy) {
+      isAIBusy = false;
+    }
   }
 }
 

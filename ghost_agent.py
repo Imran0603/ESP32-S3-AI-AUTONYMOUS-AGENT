@@ -693,6 +693,20 @@ def start_cdp_chrome():
             print_log("Chrome/Edge not found.")
             return
             
+        # Cuba hubung jika sudah ada sesi debug aktif
+        try:
+            res = requests.get(f"http://127.0.0.1:{CDP_PORT}/json", timeout=2)
+            pages = res.json()
+            if pages:
+                ws_url = pages[0].get("webSocketDebuggerUrl")
+                ws_cdp = websocket.WebSocket()
+                ws_cdp.connect(ws_url)
+                print_log("Connected to existing Chrome debugging session!")
+                return
+        except Exception:
+            pass
+
+        print_log("Starting debug Chrome instance...")
         subprocess.Popen(
             [
                 chrome_path, 
@@ -705,7 +719,27 @@ def start_cdp_chrome():
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
         )
         time.sleep(3)
-        res = requests.get(f"http://127.0.0.1:{CDP_PORT}/json", timeout=5)
+        
+        try:
+            res = requests.get(f"http://127.0.0.1:{CDP_PORT}/json", timeout=3)
+        except Exception:
+            print_log("Chrome debugging port blocked. Force-killing running Chrome and starting fresh...")
+            subprocess.run(["taskkill", "/F", "/IM", "chrome.exe"], capture_output=True)
+            time.sleep(1.5)
+            subprocess.Popen(
+                [
+                    chrome_path, 
+                    f"--remote-debugging-port={CDP_PORT}", 
+                    "--remote-allow-origins=*",
+                    f"--user-data-dir={os.path.join(os.environ.get('TEMP', ''), 'chrome_debug_profile')}",
+                    "--no-first-run",
+                    "--no-default-browser-check"
+                ],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+            )
+            time.sleep(3)
+            res = requests.get(f"http://127.0.0.1:{CDP_PORT}/json", timeout=5)
+
         pages = res.json()
         if pages:
             ws_url = pages[0].get("webSocketDebuggerUrl")
