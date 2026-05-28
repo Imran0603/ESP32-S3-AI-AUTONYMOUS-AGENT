@@ -349,6 +349,11 @@ io.on('connection', (socket) => {
     if (socket.id === activeAgentSocketId) {
         io.emit('dom_update', data);
         io.emit('error_msg', `[DOM] Page context captured (${(data.dom || '').length} chars)`);
+        
+        // Auto-resume mission if autopilot is on
+        if (aiConfig.autopilot && !isAIBusy && lastScreenshot) {
+           processAIScreenshot(lastScreenshot, aiConfig.customMission);
+        }
     }
   });
 
@@ -514,7 +519,7 @@ async function processAIScreenshot(imageBase64, customPrompt = null, stepsRemain
     // Mission instruction
     let missionInstruction = '';
     if (customPrompt) {
-      missionInstruction = `ACTIVE MISSION: ${customPrompt}`;
+      missionInstruction = `ACTIVE MISSION: ${customPrompt}\n[You have ${stepsRemaining} steps remaining to complete this mission. Execute the NEXT logical step.]`;
     } else if (aiConfig.customMission && aiConfig.customMission.trim()) {
       missionInstruction = `ACTIVE MISSION: ${aiConfig.customMission}`;
     } else {
@@ -539,8 +544,6 @@ async function processAIScreenshot(imageBase64, customPrompt = null, stepsRemain
     } else {
       promptText = `You are an autonomous agent. System: ${systemContextStr}. History: ${historyStr}. SCREEN LAYOUT: ${domCtx || 'none'}. Mission: ${missionInstruction}. Respond ONLY with valid JSON action.`;
     }
-
-    if (customPrompt) promptText += `\n\nUSER COMMAND: ${customPrompt}\n[You have ${stepsRemaining} steps remaining. Execute the NEXT logical step now.]`;
 
     // Primary: DeepSeek (text-only, cost-efficient)
     let primaryProvider = aiConfig.deepseekKey ? 'deepseek' : (aiConfig.qwenKey ? 'qwen' : null);
@@ -623,7 +626,9 @@ async function processAIScreenshot(imageBase64, customPrompt = null, stepsRemain
           const scanResult = vr.choices[0].message.content;
           if (ag.conversationHistory !== undefined) ag.visionContext = scanResult;
           io.emit('error_msg', 'Vision scan done. Re-evaluating...');
-          return await processAIScreenshot(imageBase64, customPrompt, stepsRemaining);
+          shouldKeepBusy = true; // PREVENT outer finally from clearing isAIBusy too early
+          await processAIScreenshot(imageBase64, customPrompt, stepsRemaining);
+          return;
         } else {
           io.emit('error_msg', 'Vision requested but Vision AI is OFF or Qwen key missing.');
         }
