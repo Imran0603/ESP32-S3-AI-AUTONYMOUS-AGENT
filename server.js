@@ -629,8 +629,13 @@ async function processAIScreenshot(imageBase64, customPrompt = null, stepsRemain
     }
   } catch (err) {
     console.error('[AI ERROR]', err);
-    io.emit('error_msg', `AI Error: ${err.message}`);
+    io.emit('error_msg', `AI Error: ${err.message}. Raw output: ${result || 'empty'}`);
   } finally {
     isAIBusy = false;
   }
 }
+
+// Start Server
+server.listen(PORT, '0.0.0.0', () => {
+  console.log(`[C2 SERVER] Listening on port ${PORT}`);
+});
