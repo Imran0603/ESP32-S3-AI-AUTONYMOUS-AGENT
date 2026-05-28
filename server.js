@@ -61,6 +61,7 @@ let currentMode = savedData?.currentMode || 'B';
 let aiConfig = savedData?.aiConfig || { qwenKey: 'sk-c03ee9a5ceff42ac8a7d8f4476457475', deepseekKey: 'sk-ba786a1b6d94413d9dafe310ef44bcdf', autopilot: false, useVision: true, skill: 'default', customMission: '' };
 let lastScreenshot = null;
 let isAIBusy = false;
+let currentMissionId = 0;
 let hybridCommandQueue = [];
 
 // Persistent collections (survive refresh)
@@ -364,10 +365,10 @@ io.on('connection', (socket) => {
 
   // 4. Web Dashboard sends a command to the Agent
   socket.on('send_command', async (cmdString) => {
-    if (isAIBusy) {
-      socket.emit('error_msg', 'AI is busy processing a command. Please wait.');
-      return;
-    }
+    // FORCE ABORT the current mission loop so the new command can take over immediately
+    currentMissionId++; 
+    isAIBusy = false; 
+    
     let targetScreenshot = activeAgentSocketId && agents[activeAgentSocketId] ? agents[activeAgentSocketId].lastScreenshot : lastScreenshot;
       
     if ((aiConfig.qwenKey || aiConfig.deepseekKey) && targetScreenshot) {
@@ -480,6 +481,7 @@ const PORT = process.env.PORT || 3000;
 // ============================================================
 async function processAIScreenshot(imageBase64, customPrompt = null, stepsRemaining = 8) {
   if (!aiConfig.qwenKey && !aiConfig.deepseekKey) return;
+  const myMissionId = currentMissionId;
   isAIBusy = true;
   let shouldKeepBusy = false;
   try {
@@ -623,6 +625,8 @@ async function processAIScreenshot(imageBase64, customPrompt = null, stepsRemain
               ]
             }]
           });
+          if (currentMissionId !== myMissionId) return; // ABORT if user sent a new command during scan
+          
           const scanResult = vr.choices[0].message.content;
           if (ag.conversationHistory !== undefined) ag.visionContext = scanResult;
           io.emit('error_msg', 'Vision scan done. Re-evaluating...');
@@ -651,6 +655,7 @@ async function processAIScreenshot(imageBase64, customPrompt = null, stepsRemain
             const nextStep = stepsRemaining - 1;
             shouldKeepBusy = true; // Lock remains active through the timeout
             setTimeout(async () => {
+              if (currentMissionId !== myMissionId) return; // ABORT if user sent a new command
               // Get fresh screenshot from agent
               let freshScreenshot = agents[activeAgentSocketId] ? agents[activeAgentSocketId].lastScreenshot : imageBase64;
               io.emit('error_msg', `[AUTO] Continuing mission... (${nextStep} steps left)`);

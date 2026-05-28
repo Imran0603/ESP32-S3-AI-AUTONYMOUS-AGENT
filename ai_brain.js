@@ -173,7 +173,8 @@ const HARD_RULES = [
   "NEVER call request_vision if the coordinates of the target you want to click are already listed in the SCREEN LAYOUT context.",
   "ALWAYS reuse the remembered coordinates from the layout context to click/type immediately, saving expensive vision tokens.",
   "ONLY call request_vision when the layout context is empty, or after navigating/scrolling to a new view where coordinates have changed.",
-  "NEVER repeat the same action you just did in HISTORY unless absolutely necessary. Look at HISTORY, if you already navigated to a URL, DO NOT navigate there again. Progress the mission!",
+  "NEVER repeat the same action you just did in HISTORY. If you already navigated to a URL, DO NOT navigate there again. Progress the mission!",
+  "If the ACTIVE MISSION is already completed (e.g. you are already on the requested website), output the 'nothing' action. DO NOT repeat the action.",
   "For YouTube searches, encode spaces as + in the URL query parameter.",
   "To play a song on YouTube: navigate to the search results URL first, call request_vision ONCE to get coordinates, and then click the first video thumbnail coordinates immediately."
 ];
