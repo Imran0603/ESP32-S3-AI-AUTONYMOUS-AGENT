@@ -455,11 +455,6 @@ io.on('connection', (socket) => {
 });
 
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => {
-  console.log(`====================================`);
-  console.log(`🤖 C2 Server Running on port ${PORT}`);
-  console.log(`====================================`);
-});
 
 // ============================================================
 // AI LOGIC — World-Class Prompt Injection
@@ -475,6 +470,7 @@ async function processAIScreenshot(imageBase64, customPrompt = null, stepsRemain
       delete require.cache[require.resolve('./ai_brain.js')];
       aiBrain = require('./ai_brain.js');
     } catch (err) {
+      console.error('[SERVER ERROR] Failed to load ai_brain.js:', err);
       aiBrain = null;
     }
 
