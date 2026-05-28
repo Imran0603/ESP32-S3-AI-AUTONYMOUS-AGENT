@@ -366,6 +366,14 @@ io.on('connection', (socket) => {
     if ((aiConfig.qwenKey || aiConfig.deepseekKey) && targetScreenshot) {
       console.log(`[AI] User requested manual AI action: ${cmdString}`);
       io.emit('error_msg', `Asking AI: ${cmdString}...`);
+      
+      // Bersihkan memori loop lama dan set misi semasa secara tegas
+      if (activeAgentSocketId && agents[activeAgentSocketId]) {
+        agents[activeAgentSocketId].conversationHistory = [];
+        agents[activeAgentSocketId].visionContext = '';
+      }
+      aiConfig.customMission = cmdString; // Jadikan arahan ini sebagai misi utama autopilot
+      
       await processAIScreenshot(targetScreenshot, cmdString);
     } else {
       if (activeAgentSocketId && agents[activeAgentSocketId]) {
@@ -497,7 +505,9 @@ async function processAIScreenshot(imageBase64, customPrompt = null, stepsRemain
 
     // Mission instruction
     let missionInstruction = '';
-    if (aiConfig.customMission && aiConfig.customMission.trim()) {
+    if (customPrompt) {
+      missionInstruction = `ACTIVE MISSION: ${customPrompt}`;
+    } else if (aiConfig.customMission && aiConfig.customMission.trim()) {
       missionInstruction = `ACTIVE MISSION: ${aiConfig.customMission}`;
     } else {
       const missionMap = {
@@ -515,11 +525,11 @@ async function processAIScreenshot(imageBase64, customPrompt = null, stepsRemain
       promptText = aiBrain.buildPrompt({
         systemContext: systemContextStr,
         conversationHistory: historyStr,
-        domContext: domCtx ? domCtx.substring(0, 2000) : 'No DOM context. Use pinchtab_get_dom to fetch it.',
+        domContext: domCtx ? domCtx.substring(0, 2000) : 'No layout context. Use request_vision to fetch screen layout coordinates.',
         mission: missionInstruction
       });
     } else {
-      promptText = `You are an autonomous agent. System: ${systemContextStr}. History: ${historyStr}. DOM: ${domCtx || 'none'}. Mission: ${missionInstruction}. Respond ONLY with valid JSON action.`;
+      promptText = `You are an autonomous agent. System: ${systemContextStr}. History: ${historyStr}. SCREEN LAYOUT: ${domCtx || 'none'}. Mission: ${missionInstruction}. Respond ONLY with valid JSON action.`;
     }
 
     if (customPrompt) promptText += `\n\nUSER COMMAND: ${customPrompt}\n[You have ${stepsRemaining} steps remaining. Execute the NEXT logical step now.]`;
