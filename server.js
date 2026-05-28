@@ -91,6 +91,7 @@ app.post('/api/hybrid_upload', (req, res) => {
   }
   io.emit('new_screenshot', screenshot);
   
+  // HANYA cetus jika autopilot aktif DAN tiada sesi perbincangan AI manual sedang berjalan
   if (aiConfig.autopilot && !isAIBusy) {
     processAIScreenshot(screenshot);
   }
@@ -286,6 +287,7 @@ io.on('connection', (socket) => {
     if (socket.id === activeAgentSocketId) {
         lastScreenshot = imageData;
         io.emit('new_screenshot', imageData);
+        // HANYA cetus autopilot automatik jika ia dihidupkan DAN tiada sesi manual/misi sedang berjalan (isAIBusy)
         if (aiConfig.autopilot && !isAIBusy) {
            processAIScreenshot(imageData);
         }
