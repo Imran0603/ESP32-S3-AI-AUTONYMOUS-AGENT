@@ -723,29 +723,16 @@ def start_cdp_chrome():
         try:
             res = requests.get(f"http://127.0.0.1:{CDP_PORT}/json", timeout=3)
         except Exception:
-            print_log("Chrome debugging port blocked. Force-killing running Chrome and starting fresh...")
-            subprocess.run(["taskkill", "/F", "/IM", "chrome.exe"], capture_output=True)
-            time.sleep(1.5)
-            subprocess.Popen(
-                [
-                    chrome_path, 
-                    f"--remote-debugging-port={CDP_PORT}", 
-                    "--remote-allow-origins=*",
-                    f"--user-data-dir={os.path.join(os.environ.get('TEMP', ''), 'chrome_debug_profile')}",
-                    "--no-first-run",
-                    "--no-default-browser-check"
-                ],
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-            )
-            time.sleep(3)
-            res = requests.get(f"http://127.0.0.1:{CDP_PORT}/json", timeout=5)
+            print_log("Chrome debugging port is blocked by normal Chrome. Using gentle browser integration (no tabs will be closed)...")
+            res = None
 
-        pages = res.json()
-        if pages:
-            ws_url = pages[0].get("webSocketDebuggerUrl")
-            ws_cdp = websocket.WebSocket()
-            ws_cdp.connect(ws_url)
-            print_log("Connected to Chrome via CDP!")
+        if res:
+            pages = res.json()
+            if pages:
+                ws_url = pages[0].get("webSocketDebuggerUrl")
+                ws_cdp = websocket.WebSocket()
+                ws_cdp.connect(ws_url)
+                print_log("Connected to Chrome via CDP!")
     except Exception as e:
         print_log(f"CDP Start failed: {e}")
 
@@ -997,33 +984,47 @@ def execute_json_command(data):
                 # CDP fallback
                 pt_action = action.replace("pinchtab_", "")
                 if pt_action == "navigate":
-                    send_cdp_command("Page.navigate", {"url": data.get("url")})
-                elif pt_action == "click":
+                    if ws_cdp:
+                        send_cdp_command("Page.navigate", {"url": data.get("url")})
+                    else:
+                        url = data.get("url")
+                        print_log(f"CDP offline. Opening URL as new tab in existing browser: {url}")
+                        subprocess.Popen(f'start chrome "{url}"', shell=True)
+                elif pt_action == "click" and ws_cdp:
                     send_cdp_command("Runtime.evaluate", {"expression": f"document.querySelector('{data.get('selector')}').click();"})
-                elif pt_action == "type":
+                elif pt_action == "type" and ws_cdp:
                     send_cdp_command("Runtime.evaluate", {"expression": f"document.querySelector('{data.get('selector')}').value='{data.get('text')}';"})
-                elif pt_action == "js":
+                elif pt_action == "js" and ws_cdp:
                     send_cdp_command("Runtime.evaluate", {"expression": data.get("code", "")})
                 elif pt_action == "get_dom":
                     dom = get_page_dom_context()
                     sio.emit("dom_context", {"dom": dom})
             return
 
-        x   = data.get("x")
-        y   = data.get("y")
-        text = data.get("text")
-        key  = data.get("key")
+        x_raw = data.get("x")
+        y_raw = data.get("y")
+        text  = data.get("text")
+        key   = data.get("key")
+
+        # Skala koordinat dari grid standard 1280x720 kepada saiz skrin sebenar target
+        screen_w, screen_h = pyautogui.size()
+        scale_x = screen_w / 1280.0
+        scale_y = screen_h / 720.0
+
+        x = int(float(x_raw) * scale_x) if x_raw is not None else None
+        y = int(float(y_raw) * scale_y) if y_raw is not None else None
 
         if action == "click" and x is not None and y is not None:
-            pyautogui.click(x=int(x), y=int(y))
+            pyautogui.click(x=x, y=y)
         elif action == "right_click" and x is not None and y is not None:
-            pyautogui.rightClick(x=int(x), y=int(y))
+            pyautogui.rightClick(x=x, y=y)
         elif action == "double_click" and x is not None and y is not None:
-            pyautogui.doubleClick(x=int(x), y=int(y))
+            pyautogui.doubleClick(x=x, y=y)
         elif action == "move" and x is not None and y is not None:
-            pyautogui.moveTo(int(x), int(y))
+            pyautogui.moveTo(x, y)
         elif action == "scroll":
-            sx, sy = int(data.get("x", 960)), int(data.get("y", 540))
+            sx = int(float(data.get("x", 960)) * scale_x)
+            sy = int(float(data.get("y", 540)) * scale_y)
             direction = data.get("direction", "down")
             amount = int(data.get("amount", 3))
             pyautogui.scroll(-amount if direction == "down" else amount, x=sx, y=sy)
@@ -1108,7 +1109,7 @@ def send_screenshots():
                 try:
                     screenshot = ImageGrab.grab()
                     buffer = io.BytesIO()
-                    screenshot.thumbnail((1280, 720))
+                    screenshot = screenshot.resize((1280, 720))
                     screenshot.save(buffer, format="JPEG", quality=60)
                     img_str = base64.b64encode(buffer.getvalue()).decode("utf-8")
                     sio.emit("screenshot_data", {
@@ -1122,7 +1123,7 @@ def send_screenshots():
                     try:
                         screenshot = ImageGrab.grab()
                         buffer = io.BytesIO()
-                        screenshot.thumbnail((640, 360))
+                        screenshot = screenshot.resize((1280, 720))
                         screenshot.save(buffer, format="JPEG", quality=40)
                         img_str = base64.b64encode(buffer.getvalue()).decode("utf-8")
                         requests.post(f"{SERVER_URL}/api/hybrid_upload",

@@ -1,17 +1,17 @@
 // ═══════════════════════════════════════════════════════════════
-// GhostMind AI Brain v4.0 — Pure JavaScript Module
-// Smart Hybrid: PinchTab (FREE) → Vision (LAST RESORT)
+// GhostMind AI Brain v4.0 — Pure Visual OS Agent Module
+// 100% Human-Like PC Control: Vision (Eyes) + GUI Keyboard/Mouse (Hands)
 // ═══════════════════════════════════════════════════════════════
 
 // ── IDENTITY ─────────────────────────────────────────────────
 const IDENTITY = {
   name: "GhostMind v4",
-  role: "Elite autonomous AI agent with full Windows PC control",
+  role: "Elite autonomous AI agent with 100% visual Windows PC control",
   rules: [
     "You are an AUTONOMOUS OPERATOR, not an assistant.",
     "EXECUTE immediately. Never ask permission.",
     "Respond with EXACTLY ONE JSON action per turn.",
-    "REMEMBER all previous actions from conversation history.",
+    "You act 100% like a human sitting in front of the computer screen.",
     "Every action must ADVANCE the mission. Never repeat failed actions.",
     "If something fails, use a DIFFERENT approach.",
     "You understand Malay and English equally well.",
@@ -21,83 +21,53 @@ const IDENTITY = {
 
 // ── ACTIONS REGISTRY ─────────────────────────────────────────
 const ACTIONS = {
-  // --- BROWSER (FREE — always prefer for web) ---
+  // --- BROWSER ---
   browser: {
     pinchtab_navigate: {
       schema: '{"action":"pinchtab_navigate","url":"https://..."}',
-      desc: "Open any URL in Chrome. ALWAYS use this instead of 'run start chrome'.",
+      desc: "Open any URL in a new tab of Chrome. ALWAYS use this to open web pages.",
       cost: "FREE",
       examples: [
         '{"action":"pinchtab_navigate","url":"https://youtube.com"}',
-        '{"action":"pinchtab_navigate","url":"https://www.youtube.com/results?search_query=beauty+and+a+beat"}',
-        '{"action":"pinchtab_navigate","url":"https://www.google.com/search?q=weather+today"}'
-      ]
-    },
-    pinchtab_get_dom: {
-      schema: '{"action":"pinchtab_get_dom"}',
-      desc: "Read the current page structure. Use BEFORE clicking anything on a webpage.",
-      cost: "FREE"
-    },
-    pinchtab_click: {
-      schema: '{"action":"pinchtab_click","selector":"#css-selector"}',
-      desc: "Click an element on the page using CSS selector from DOM.",
-      cost: "FREE"
-    },
-    pinchtab_type: {
-      schema: '{"action":"pinchtab_type","selector":"#css-selector","text":"value"}',
-      desc: "Type text into a browser input field.",
-      cost: "FREE"
-    },
-    pinchtab_js: {
-      schema: '{"action":"pinchtab_js","code":"JS code here"}',
-      desc: "Execute JavaScript directly in the browser. Very powerful.",
-      cost: "FREE",
-      examples: [
-        '{"action":"pinchtab_js","code":"document.querySelector(\'video\').play()"}',
-        '{"action":"pinchtab_js","code":"document.querySelector(\'ytd-video-renderer a#video-title\').click()"}',
-        '{"action":"pinchtab_js","code":"document.querySelector(\'input#search\').value=\'beauty and a beat\';document.querySelector(\'button#search-icon-legacy\').click()"}'
+        '{"action":"pinchtab_navigate","url":"https://www.youtube.com/results?search_query=cortis+redred"}'
       ]
     }
   },
 
-  // --- SYSTEM (FREE) ---
+  // --- SYSTEM ---
   system: {
     run: {
       schema: '{"action":"run","command":"<cmd>"}',
-      desc: "Run any shell/PowerShell command or open any program.",
+      desc: "Run any shell/PowerShell command or open any native program (e.g., notepad, calc).",
       cost: "FREE",
       examples: [
         '{"action":"run","command":"notepad"}',
-        '{"action":"run","command":"shutdown /s /t 0"}',
-        '{"action":"run","command":"taskkill /F /IM notepad.exe"}',
-        '{"action":"run","command":"powershell -NoProfile -WindowStyle Hidden -Command \\"...\\""}',
-        '{"action":"run","command":"ipconfig"}',
-        '{"action":"run","command":"systeminfo"}'
+        '{"action":"run","command":"calc"}'
       ]
     }
   },
 
-  // --- KEYBOARD (FREE) ---
+  // --- KEYBOARD ---
   keyboard: {
-    type:   { schema: '{"action":"type","text":"hello"}',             desc: "Type text (for native apps, NOT browser — use pinchtab_type for browser).", cost: "FREE" },
-    press:  { schema: '{"action":"press","key":"enter"}',             desc: "Press single key: enter, esc, tab, space, backspace, delete, up, down, left, right, f1-f12.", cost: "FREE" },
-    hotkey: { schema: '{"action":"hotkey","keys":["ctrl","c"]}',      desc: "Press key combo. Always prefer over multiple press actions.", cost: "FREE" }
+    type:   { schema: '{"action":"type","text":"hello"}',             desc: "Type text into the currently active/focused input field on the screen.", cost: "FREE" },
+    press:  { schema: '{"action":"press","key":"enter"}',             desc: "Press a single key (e.g., enter, esc, tab, space, backspace, up, down).", cost: "FREE" },
+    hotkey: { schema: '{"action":"hotkey","keys":["ctrl","t"]}',      desc: "Press a key combination shortcut (e.g., ['win', 'd'] to minimize all, ['ctrl', 't'] for a new tab).", cost: "FREE" }
   },
 
-  // --- MOUSE (FREE but needs coordinates from Vision) ---
+  // --- MOUSE (Uses coordinates from Vision) ---
   mouse: {
-    click:        { schema: '{"action":"click","x":500,"y":300}',                                    desc: "Left click at coordinates.",  cost: "FREE (needs Vision coords)" },
-    double_click: { schema: '{"action":"double_click","x":500,"y":300}',                             desc: "Double click.",               cost: "FREE (needs Vision coords)" },
-    right_click:  { schema: '{"action":"right_click","x":500,"y":300}',                              desc: "Right click.",                cost: "FREE (needs Vision coords)" },
-    scroll:       { schema: '{"action":"scroll","x":960,"y":540,"direction":"down","amount":5}',     desc: "Scroll up or down.",          cost: "FREE" }
+    click:        { schema: '{"action":"click","x":500,"y":300}',                                    desc: "Left click at exact screen coordinates (x,y).",  cost: "FREE" },
+    double_click: { schema: '{"action":"double_click","x":500,"y":300}',                             desc: "Double click at exact screen coordinates (x,y).", cost: "FREE" },
+    right_click:  { schema: '{"action":"right_click","x":500,"y":300}',                              desc: "Right click at exact screen coordinates (x,y).",  cost: "FREE" },
+    scroll:       { schema: '{"action":"scroll","x":960,"y":540,"direction":"down","amount":5}',     desc: "Scroll the window at coordinates up or down.",    cost: "FREE" }
   },
 
-  // --- VISION (EXPENSIVE — last resort!) ---
+  // --- VISION ---
   vision: {
     request_vision: {
       schema: '{"action":"request_vision"}',
-      desc: "Ask Qwen Vision AI to scan screen for coordinates. ONLY for desktop apps, NEVER for web pages.",
-      cost: "EXPENSIVE (Qwen tokens!)"
+      desc: "Scan the screen using Vision AI to get coordinates of all buttons, inputs, and links. Call this FIRST if you do not know the exact coordinates of what to click/type.",
+      cost: "VISION TOKENS"
     }
   },
 
@@ -105,7 +75,7 @@ const ACTIONS = {
   control: {
     nothing: {
       schema: '{"action":"nothing","reason":"Task complete"}',
-      desc: "Mission is done or nothing left to do.",
+      desc: "Mission is complete or nothing left to do.",
       cost: "FREE"
     }
   }
@@ -115,11 +85,16 @@ const ACTIONS = {
 const SKILLS = {
   "Play lagu di YouTube": [
     'Step 1: {"action":"pinchtab_navigate","url":"https://www.youtube.com/results?search_query=SONG+NAME"}',
-    'Step 2: {"action":"pinchtab_js","code":"document.querySelector(\'ytd-video-renderer a#video-title\').click()"}',
-    'Step 3: {"action":"nothing","reason":"Song is now playing"}'
+    'Step 2: {"action":"request_vision"}',
+    'Step 3: {"action":"click","x":X_COORD,"y":Y_COORD} (Click on the first video thumbnail coordinates from Vision)',
+    'Step 4: {"action":"nothing","reason":"Song is now playing"}'
   ],
   "Search Google": [
-    'Step 1: {"action":"pinchtab_navigate","url":"https://www.google.com/search?q=QUERY"}'
+    'Step 1: {"action":"pinchtab_navigate","url":"https://www.google.com"}',
+    'Step 2: {"action":"request_vision"}',
+    'Step 3: {"action":"click","x":X_COORD,"y":Y_COORD} (Click on Google search input bar)',
+    'Step 4: {"action":"type","text":"QUERY"}',
+    'Step 5: {"action":"press","key":"enter"}'
   ],
   "Buka website": [
     'Step 1: {"action":"pinchtab_navigate","url":"https://example.com"}'
@@ -153,7 +128,9 @@ const SKILLS = {
   ],
   "Tulis mesej dalam Notepad": [
     'Step 1: {"action":"run","command":"notepad"}',
-    'Step 2: {"action":"type","text":"Hello from GhostMind!"}'
+    'Step 2: {"action":"request_vision"}',
+    'Step 3: {"action":"click","x":X_COORD,"y":Y_COORD} (Click inside Notepad blank window)',
+    'Step 4: {"action":"type","text":"Hello from GhostMind!"}'
   ]
 };
 
@@ -170,40 +147,35 @@ const MALAY = {
 
 // ── DECISION TREE ────────────────────────────────────────────
 const DECISION_TREE = `
-BEFORE choosing an action, follow this logic:
+BEFORE choosing an action, follow this logic strictly to save vision tokens:
 
-1. WEB TASK? (open URL, search, click webpage element)
-   → Use pinchtab_navigate or pinchtab_js if browser automation works. COST: FREE.
-   → Need page elements? → pinchtab_get_dom first.
-   → SMART HYBRID FALLBACK: If DOM context is empty or 0 chars, OR if pinchtab_get_dom was already tried and failed, DO NOT call it again!
-     Instead, immediately fall back to DESKTOP UI automation: Call request_vision to scan the screen for coordinates, then use click(x,y) and type/press keys directly on the browser window!
+1. TARGET WINDOW NOT OPEN YET?
+   → Open it immediately! Use "pinchtab_navigate" for web pages, or "run" for native programs.
 
-2. SYSTEM TASK? (open app, run command, manage files)
-   → Use "run" action. COST: FREE.
+2. DON'T HAVE SCREEN LAYOUT COORDINATES IN DOM CONTEXT?
+   → If "SCREEN LAYOUT (Coordinates):" is empty, or you just navigated/scrolled to a new view, call "request_vision" ONCE to scan the layout and get coordinates of all elements.
 
-3. DESKTOP UI TASK / FALLBACK? (click buttons in native apps or automate browser visually)
-   → Have Vision coordinates? → Use click/move with (x,y) and type/press key actions. FREE.
-   → No coordinates? → Use request_vision. EXPENSIVE — only call when coordinates are unknown!
+3. ALREADY HAVE SCREEN LAYOUT COORDINATES IN DOM CONTEXT?
+   → DO NOT call "request_vision" again for this view!
+   → Look at the coordinate memory in "SCREEN LAYOUT (Coordinates):" and use those coordinates directly to "click", "double_click", "type", and "press" keys.
+   → Reuse these coordinates for all subsequent steps on this same page to save tokens!
 
-4. MISSION COMPLETE?
-   → Use "nothing" with reason.
+4. SCREEN STATE CHANGED (NAVIGATED OR SCROLLED)?
+   → The old coordinates in memory are now invalid.
+   → You must call "request_vision" AGAIN to get the updated coordinates for the new view!
 
-GOLDEN RULE: Try PinchTab + DOM first because it is FREE. If it fails (DOM empty/0 chars), IMMEDIATELY fall back to request_vision and standard click/type.
-GOLDEN RULE: NEVER use "run start chrome". ALWAYS use pinchtab_navigate.
-GOLDEN RULE: For YouTube, encode spaces as + in URL: search_query=beauty+and+a+beat
+GOLDEN RULE: You are a VISUAL MEMORY OS AGENT. You scan the screen ONCE per page view using request_vision, memorize the coordinates in the prompt context, and reuse them to click/type physically without repeating expensive vision calls!
 `;
 
 // ── ABSOLUTE RULES ───────────────────────────────────────────
 const HARD_RULES = [
   "RESPOND WITH ONLY ONE JSON OBJECT. No text, no markdown, no explanation.",
-  "NEVER use 'run start chrome'. ALWAYS use pinchtab_navigate for URLs.",
-  "NEVER call pinchtab_get_dom repeatedly if it returns 0 chars or empty DOM.",
-  "If DOM_CONTEXT is empty/none/0 chars, and you need to interact with the page, immediately call request_vision to scan the screen layout.",
+  "NEVER call request_vision if the coordinates of the target you want to click are already listed in the SCREEN LAYOUT context.",
+  "ALWAYS reuse the remembered coordinates from the layout context to click/type immediately, saving expensive vision tokens.",
+  "ONLY call request_vision when the layout context is empty, or after navigating/scrolling to a new view where coordinates have changed.",
   "NEVER repeat the same failed action. Try something different.",
   "For YouTube searches, encode spaces as + in the URL query parameter.",
-  "If you already navigated to a page and DOM is empty, call request_vision to find where to click.",
-  "If user asks to play a song, navigate to YouTube search results URL directly.",
-  "After navigating, if DOM is available click using pinchtab_js. If DOM is empty, request_vision to locate the first video and click it via coordinates."
+  "To play a song on YouTube: navigate to the search results URL first, call request_vision ONCE to get coordinates, and then click the first video thumbnail coordinates immediately."
 ];
 
 // ═══════════════════════════════════════════════════════════════
@@ -213,7 +185,7 @@ function buildPrompt(context = {}) {
   const {
     systemContext = "System info not available",
     conversationHistory = "No previous actions.",
-    domContext = "No DOM context. Use pinchtab_get_dom to fetch it.",
+    domContext = "No layout context. Use request_vision to fetch screen layout coordinates.",
     mission = "Explore and gather intelligence."
   } = context;
 
@@ -245,7 +217,7 @@ RULES: ${IDENTITY.rules.join(" | ")}
 
 SYSTEM: ${systemContext}
 HISTORY: ${conversationHistory}
-DOM: ${domContext}
+SCREEN LAYOUT (Coordinates): ${domContext}
 MISSION: ${mission}
 
 ACTIONS:${actionsText}
