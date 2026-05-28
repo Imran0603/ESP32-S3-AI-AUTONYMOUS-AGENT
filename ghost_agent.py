@@ -724,8 +724,8 @@ def send_cdp_command(method, params=None):
     cdp_msg_id += 1
 
 def initialize_browser_control():
-    # WAJIB LANCARKAN CHROME DEBUG DULU SEBELUM PINCHTAB!
-    start_cdp_chrome()
+    # Only download and start PinchTab server in background, do NOT force open Chrome yet.
+    # Chrome will only open when the AI sends a pinchtab_navigate command.
     download_and_start_pinchtab()
 
 # ============================================================
@@ -940,6 +940,10 @@ def execute_json_command(data):
 
         # PinchTab CDP actions
         if action.startswith("pinchtab_"):
+            if not ws_cdp:
+                print_log("Chrome CDP not started yet. Starting lazily now...")
+                start_cdp_chrome()
+                
             if PINCHTAB_ACTIVE:
                 pt_action = action.replace("pinchtab_", "")
                 if pt_action == "get_dom":

@@ -417,7 +417,7 @@ async function processAIScreenshot(imageBase64, customPrompt = null) {
     let result = null;
     let basePrompt = "";
     try {
-      basePrompt = fs.readFileSync(path.join(__dirname, 'ai_brain.md'), 'utf-8');
+      basePrompt = require('./ai_brain.js');
     } catch (err) {
       basePrompt = "You are an autonomous agent. Respond only with valid JSON action.";
     }
