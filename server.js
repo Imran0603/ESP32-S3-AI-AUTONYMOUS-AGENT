@@ -62,6 +62,9 @@ let aiConfig = savedData?.aiConfig || { qwenKey: 'sk-c03ee9a5ceff42ac8a7d8f44764
 let lastScreenshot = null;
 let isAIBusy = false;
 let currentMissionId = 0;
+let lastActionSignature = ''; // PHASE 1: Track last AI action to hard-block loops
+let activeMissionSteps = 8;   // Track steps remaining for DOM-triggered continuation
+let activeMissionPrompt = null; // Track current mission prompt for DOM continuation
 let hybridCommandQueue = [];
 
 // Persistent collections (survive refresh)
@@ -344,16 +347,31 @@ io.on('connection', (socket) => {
     }
   });
 
-  // 7. DOM context from agent
+  // 7. DOM context from agent — PHASE 2: Auto-continue mission with DOM data
   socket.on('dom_context', (data) => {
     if (agents[socket.id]) agents[socket.id].visionContext = data.dom;
     if (socket.id === activeAgentSocketId) {
         io.emit('dom_update', data);
         io.emit('error_msg', `[DOM] Page context captured (${(data.dom || '').length} chars)`);
         
-        // Auto-resume mission if autopilot is on
-        if (aiConfig.autopilot && !isAIBusy && lastScreenshot) {
-           processAIScreenshot(lastScreenshot, aiConfig.customMission);
+        // Auto-continue active mission with fresh DOM (replaces Vision AI for browser tasks)
+        if (activeMissionPrompt && activeMissionSteps > 0 && !isAIBusy && lastScreenshot) {
+           io.emit('error_msg', `[DOM→AI] DOM ready. Continuing mission with DOM context... (${activeMissionSteps} steps left)`);
+           processAIScreenshot(lastScreenshot, activeMissionPrompt, activeMissionSteps);
+        }
+    }
+  });
+
+  // 8. AX Tree context from agent — Desktop UI Automation ("DOM untuk Desktop")
+  socket.on('ax_tree_context', (data) => {
+    if (agents[socket.id]) agents[socket.id].desktopContext = data.ax_tree;
+    if (socket.id === activeAgentSocketId) {
+        io.emit('error_msg', `[AX TREE] Desktop context captured (${(data.ax_tree || '').length} chars)`);
+        
+        // Auto-continue active mission with fresh AX tree (replaces Vision AI for desktop tasks)
+        if (activeMissionPrompt && activeMissionSteps > 0 && !isAIBusy && lastScreenshot) {
+           io.emit('error_msg', `[AX→AI] AX Tree ready. Continuing mission with desktop context... (${activeMissionSteps} steps left)`);
+           processAIScreenshot(lastScreenshot, activeMissionPrompt, activeMissionSteps);
         }
     }
   });
@@ -367,7 +385,8 @@ io.on('connection', (socket) => {
   socket.on('send_command', async (cmdString) => {
     // FORCE ABORT the current mission loop so the new command can take over immediately
     currentMissionId++; 
-    isAIBusy = false; 
+    isAIBusy = false;
+    lastActionSignature = ''; // PHASE 1: Reset loop blocker for new mission
     
     let targetScreenshot = activeAgentSocketId && agents[activeAgentSocketId] ? agents[activeAgentSocketId].lastScreenshot : lastScreenshot;
       
@@ -380,7 +399,9 @@ io.on('connection', (socket) => {
         agents[activeAgentSocketId].conversationHistory = [];
         agents[activeAgentSocketId].visionContext = '';
       }
-      aiConfig.customMission = cmdString; // Jadikan arahan ini sebagai misi utama autopilot
+      aiConfig.customMission = cmdString;
+      activeMissionPrompt = cmdString;  // PHASE 2: Track for DOM-triggered continuation
+      activeMissionSteps = 8;
       
       await processAIScreenshot(targetScreenshot, cmdString);
     } else {
@@ -515,8 +536,10 @@ async function processAIScreenshot(imageBase64, customPrompt = null, stepsRemain
       ? history.map(h => `[${h.role.toUpperCase()}]: ${h.content}`).join('\n')
       : 'No previous actions.';
 
-    // DOM Context
+    // DOM Context (browser) + AX Tree Context (desktop)
     const domCtx = ag.visionContext || '';
+    const axCtx = ag.desktopContext || '';
+    const combinedContext = domCtx || axCtx || '';
 
     // Mission instruction
     let missionInstruction = '';
@@ -540,11 +563,23 @@ async function processAIScreenshot(imageBase64, customPrompt = null, stepsRemain
       promptText = aiBrain.buildPrompt({
         systemContext: systemContextStr,
         conversationHistory: historyStr,
-        domContext: domCtx ? domCtx.substring(0, 2000) : 'No layout context. Use request_vision to fetch screen layout coordinates.',
+        domContext: combinedContext ? combinedContext.substring(0, 4000) : 'No context available. Use pinchtab_navigate for web tasks or run for desktop apps.',
         mission: missionInstruction
       });
     } else {
-      promptText = `You are an autonomous agent. System: ${systemContextStr}. History: ${historyStr}. SCREEN LAYOUT: ${domCtx || 'none'}. Mission: ${missionInstruction}. Respond ONLY with valid JSON action.`;
+      promptText = `You are an autonomous agent. System: ${systemContextStr}. History: ${historyStr}. CONTEXT: ${combinedContext || 'none'}. Mission: ${missionInstruction}. Respond ONLY with valid JSON action.`;
+    }
+
+    // PHASE 3: Smart Routing — Browser Mode vs Desktop UIA Mode vs Vision Fallback
+    const isBrowserMode = domCtx && (domCtx.includes('"url"') || domCtx.includes('"elements"'));
+    const isDesktopMode = axCtx && axCtx.includes('"desktop_ax_tree"');
+    
+    if (isBrowserMode) {
+      promptText += '\n\n[BROWSER MODE] You have DOM context with CSS selectors. Use "pinchtab_click" with selector to click elements and "pinchtab_type" to type in inputs. DO NOT call "request_vision" — DOM is faster and free. To navigate, use "pinchtab_navigate". After navigation, DOM will be auto-fetched for you.';
+    } else if (isDesktopMode) {
+      promptText += '\n\n[DESKTOP MODE] You have AX Tree context with element names and AutomationIds. Use "uia_click" with name or automation_id to click buttons, menu items, tree items, etc. Use "uia_type" with name or automation_id to type text into Edit controls. DO NOT call "request_vision" — AX Tree is faster and free. After running a new app, AX Tree will be auto-fetched for you.';
+    } else {
+      promptText += '\n\n[NO CONTEXT MODE] No DOM or AX Tree context yet. For web pages: use "pinchtab_navigate" (DOM auto-fetched). For desktop apps: use "run" command (AX Tree auto-fetched). For exotic apps that don\'t support UIA: use "request_vision" as last resort.';
     }
 
     // Primary: DeepSeek (text-only, cost-efficient)
@@ -557,7 +592,7 @@ async function processAIScreenshot(imageBase64, customPrompt = null, stepsRemain
         model: 'deepseek-chat',
         messages: [
           { role: 'system', content: 'You are GhostMind, an autonomous computer control agent. Respond ONLY with valid JSON. No markdown, no explanation.' },
-          { role: 'user', content: promptText + '\n[Note: You are blind unless you call request_vision or pinchtab_get_dom. Use pinchtab_get_dom first for web tasks.]' }
+          { role: 'user', content: promptText }
         ],
         response_format: { type: 'json_object' },
         max_tokens: 1024
@@ -589,22 +624,40 @@ async function processAIScreenshot(imageBase64, customPrompt = null, stepsRemain
       
       const parsed = JSON.parse(cleanResult);
 
+      // ══════ PHASE 1: HARD LOOP BLOCKER ══════
+      const actionSig = `${parsed.action}|${parsed.url || ''}|${parsed.command || ''}|${parsed.selector || ''}`;
+      if (actionSig === lastActionSignature && parsed.action !== 'nothing' && parsed.action !== 'request_vision') {
+        console.log(`[LOOP BLOCKED] Duplicate action detected: ${actionSig}`);
+        io.emit('error_msg', `[LOOP BLOCKED] AI tried to repeat: ${parsed.action}. Forcing mission complete.`);
+        parsed.action = 'nothing';
+        parsed.reason = 'Duplicate action blocked by server';
+      }
+      lastActionSignature = actionSig;
+      // ════════════════════════════════════════════
+
       // Push assistant action to history
       if (ag.conversationHistory) {
-        ag.conversationHistory.push({ role: 'assistant', content: `action: ${parsed.action}${parsed.url ? ' → ' + parsed.url : ''}${parsed.command ? ' → ' + parsed.command : ''}` });
+        ag.conversationHistory.push({ role: 'assistant', content: `action: ${parsed.action}${parsed.url ? ' → ' + parsed.url : ''}${parsed.command ? ' → ' + parsed.command : ''}${parsed.selector ? ' @ ' + parsed.selector : ''}` });
       }
 
       // Generate stateful system feedback
       let systemFeedback = '[SYSTEM] Action executed.';
       if (parsed.action === 'request_vision') {
-        systemFeedback = '[SYSTEM] Vision scan completed. Elements coordinates have been updated in SCREEN LAYOUT. Proceed with click/type.';
+        systemFeedback = '[SYSTEM] Vision scan completed. Element coordinates have been updated in SCREEN LAYOUT. Proceed with click/type.';
       } else if (parsed.action === 'pinchtab_navigate' || parsed.action === 'run') {
         ag.visionContext = ''; // Clear layout memory since the page/window has changed!
-        systemFeedback = `[SYSTEM] Navigation/Run executed. Screen view has changed. The old coordinates are now INVALID. You MUST call "request_vision" next to scan the new page layout coordinates.`;
+        ag.desktopContext = ''; // Clear desktop context too
+        if (parsed.action === 'run') {
+          systemFeedback = `[SYSTEM] Command executed. Desktop app may have opened. AX Tree context will be auto-fetched. Wait for next turn — fresh AX Tree with element names will appear in your context.`;
+        } else {
+          systemFeedback = `[SYSTEM] Navigation executed. Screen view has changed. DOM context will be auto-fetched. Wait for next turn — fresh DOM with CSS selectors will appear in your context.`;
+        }
       } else if (parsed.action === 'nothing') {
         systemFeedback = '[SYSTEM] Mission complete.';
+        activeMissionPrompt = null; // Clear mission
+        activeMissionSteps = 0;
       } else {
-        systemFeedback = `[SYSTEM] Action "${parsed.action}" executed successfully. Screen view has not changed. Element coordinates in SCREEN LAYOUT remain valid and should be reused.`;
+        systemFeedback = `[SYSTEM] Action "${parsed.action}" executed successfully.`;
       }
 
       if (ag.conversationHistory) {
@@ -645,23 +698,54 @@ async function processAIScreenshot(imageBase64, customPrompt = null, stepsRemain
       } else if (parsed.action && parsed.action !== 'nothing') {
         if (activeAgentSocketId && agents[activeAgentSocketId]) {
           io.to(activeAgentSocketId).emit('execute_json_command', parsed);
-          io.emit('error_msg', `AI → ${parsed.action}${parsed.command ? ': ' + parsed.command.substring(0,60) : ''}${parsed.url ? ': ' + parsed.url.substring(0,60) : ''}`);
+          io.emit('error_msg', `AI → ${parsed.action}${parsed.command ? ': ' + parsed.command.substring(0,60) : ''}${parsed.url ? ': ' + parsed.url.substring(0,60) : ''}${parsed.selector ? ' @ ' + parsed.selector.substring(0,40) : ''}`);
           
           // ═══════════════════════════════════════════════════
-          // AUTONOMOUS LOOP: Continue mission automatically!
-          // Wait for action to complete, then re-query AI
+          // PHASE 2: Smart continuation after action
+          // For pinchtab_navigate: Wait for DOM auto-fetch (dom_context event)
+          // For other actions: Continue via setTimeout
           // ═══════════════════════════════════════════════════
           if (customPrompt && stepsRemaining > 0) {
             const nextStep = stepsRemaining - 1;
-            shouldKeepBusy = true; // Lock remains active through the timeout
-            setTimeout(async () => {
-              if (currentMissionId !== myMissionId) return; // ABORT if user sent a new command
-              // Get fresh screenshot from agent
-              let freshScreenshot = agents[activeAgentSocketId] ? agents[activeAgentSocketId].lastScreenshot : imageBase64;
-              io.emit('error_msg', `[AUTO] Continuing mission... (${nextStep} steps left)`);
-              await processAIScreenshot(freshScreenshot || imageBase64, customPrompt, nextStep);
-            }, 4000); // Wait 4 seconds for action to complete
-            return;
+            activeMissionSteps = nextStep;   // Store for DOM-triggered continuation
+            activeMissionPrompt = customPrompt;
+            
+            if (parsed.action === 'pinchtab_navigate') {
+              // DON'T use setTimeout — wait for DOM auto-fetch instead
+              shouldKeepBusy = false; // Release lock, dom_context handler will re-acquire
+              io.emit('error_msg', `[NAV] Waiting for page DOM... (${nextStep} steps left)`);
+              
+              // Auto-request DOM after page load delay
+              setTimeout(() => {
+                if (currentMissionId !== myMissionId) return;
+                if (activeAgentSocketId) {
+                  io.to(activeAgentSocketId).emit('request_dom');
+                }
+              }, 3000); // 3s for page to load
+              return;
+            } else if (parsed.action === 'run') {
+              // Wait for app to open, then auto-fetch AX Tree
+              shouldKeepBusy = false; // Release lock, ax_tree_context handler will re-acquire
+              io.emit('error_msg', `[RUN] Waiting for app AX Tree... (${nextStep} steps left)`);
+              
+              setTimeout(() => {
+                if (currentMissionId !== myMissionId) return;
+                if (activeAgentSocketId) {
+                  io.to(activeAgentSocketId).emit('request_ax_tree');
+                }
+              }, 2500); // 2.5s for app to open
+              return;
+            } else {
+              // Non-navigation actions: continue via setTimeout as before
+              shouldKeepBusy = true;
+              setTimeout(async () => {
+                if (currentMissionId !== myMissionId) return;
+                let freshScreenshot = agents[activeAgentSocketId] ? agents[activeAgentSocketId].lastScreenshot : imageBase64;
+                io.emit('error_msg', `[AUTO] Continuing mission... (${nextStep} steps left)`);
+                await processAIScreenshot(freshScreenshot || imageBase64, customPrompt, nextStep);
+              }, 3000);
+              return;
+            }
           }
         } else {
           hybridCommandQueue.push(JSON.stringify(parsed));

