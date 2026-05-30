@@ -36,6 +36,35 @@
         .screen-container { width: 100%; aspect-ratio: 16/9; background: #000; border: 2px solid #333; border-radius: 8px; overflow: hidden; position: relative; display: flex; align-items: center; justify-content: center; margin-bottom: 20px; }
         #screenImage { max-width: 100%; max-height: 100%; display: none; }
         .waiting-text { color: #52525b; font-size: 18px; }
+        .live-indicator {
+            position: absolute;
+            top: 15px;
+            right: 15px;
+            background: rgba(239, 68, 68, 0.85);
+            color: white;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 10px;
+            font-weight: bold;
+            font-family: monospace;
+            display: none;
+            align-items: center;
+            gap: 6px;
+            box-shadow: 0 0 10px rgba(239, 68, 68, 0.5);
+            z-index: 10;
+        }
+        .live-dot {
+            width: 8px;
+            height: 8px;
+            background-color: white;
+            border-radius: 50%;
+            display: inline-block;
+            animation: pulse-live 1s infinite alternate;
+        }
+        @keyframes pulse-live {
+            0% { opacity: 0.3; }
+            100% { opacity: 1; }
+        }
 
         .command-box { display: flex; gap: 10px; }
         input[type="text"] { flex: 1; padding: 12px; border-radius: 6px; border: 1px solid #3f3f46; background: #27272a; color: white; outline: none; }
@@ -203,6 +232,16 @@
                     <span class="slider"></span>
                 </label>
             </div>
+            <div class="switch-container" style="margin-left: auto; padding-left: 20px; border-left: 1px solid #333;">
+                <div>
+                    <div class="mode-text">📺 Live Stream</div>
+                    <div class="mode-desc">High-FPS real-time stream</div>
+                </div>
+                <label class="switch">
+                    <input type="checkbox" id="liveStreamSwitch">
+                    <span class="slider"></span>
+                </label>
+            </div>
         </div>
 
         <div class="ai-config">
@@ -230,6 +269,7 @@
         </div>
 
         <div class="screen-container">
+            <div id="liveIndicator" class="live-indicator"><span class="live-dot"></span>LIVE FEED</div>
             <div id="waitingText" class="waiting-text">Waiting for agent screen feed...</div>
             <img id="screenImage" alt="Live PC Screen">
         </div>
@@ -351,8 +391,11 @@
         const saveAiConfigBtn = document.getElementById('saveAiConfigBtn');
         const agentSelector = document.getElementById('agentSelector');
         const visionSwitch = document.getElementById('visionSwitch');
+        const liveStreamSwitch = document.getElementById('liveStreamSwitch');
+        const liveIndicator = document.getElementById('liveIndicator');
 
         let isOnline = false;
+        let isAIBusy = false;
 
         function log(msg) {
             const p = document.createElement('p');
@@ -433,6 +476,15 @@
             waitingText.style.display = 'none';
             screenImage.style.display = 'block';
             screenImage.src = 'data:image/jpeg;base64,' + base64Img;
+            
+            // Show live badge if liveStream is active or AI is busy
+            if (liveIndicator) {
+                if ((liveStreamSwitch && liveStreamSwitch.checked) || isAIBusy) {
+                    liveIndicator.style.display = 'flex';
+                } else {
+                    liveIndicator.style.display = 'none';
+                }
+            }
         });
 
         socket.on('heartbeat_received', () => {
@@ -466,6 +518,12 @@
             log(`Autopilot turned ${e.target.checked ? 'ON' : 'OFF'}`);
         });
 
+        // Live Stream Toggling
+        liveStreamSwitch.addEventListener('change', (e) => {
+            socket.emit('toggle_live_stream', e.target.checked);
+            log(`Live Screen Stream turned ${e.target.checked ? 'ON' : 'OFF'}`);
+        });
+
         function scanVision() {
             log("Requesting Qwen to scan screen and extract coordinates for DeepSeek...");
             socket.emit('scan_vision');
@@ -491,7 +549,20 @@
             if (config.customMission !== undefined) customMissionInput.value = config.customMission;
             autopilotSwitch.checked = config.autopilot || false;
             visionSwitch.checked = config.useVision || false;
+            if (liveStreamSwitch) liveStreamSwitch.checked = config.liveStream || false;
             log('Synced AI configuration from server.');
+        });
+
+        // Receive AI Busy Status
+        socket.on('ai_busy_status', (data) => {
+            isAIBusy = data.busy;
+            if (liveIndicator) {
+                if (isAIBusy || (liveStreamSwitch && liveStreamSwitch.checked)) {
+                    liveIndicator.style.display = 'flex';
+                } else {
+                    liveIndicator.style.display = 'none';
+                }
+            }
         });
 
         // Sending Commands
