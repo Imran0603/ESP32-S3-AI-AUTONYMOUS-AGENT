@@ -157,17 +157,29 @@ const ACTIONS = {
 // ── SKILL RECIPES ────────────────────────────────────────────
 const SKILLS = {
   "Play lagu di YouTube": [
-    'Step 1: {"action":"pinchtab_navigate","url":"https://www.youtube.com/results?search_query=SONG+NAME"}',
-    'Step 2: {"action":"request_vision"}',
-    'Step 3: {"action":"click","x":X_COORD,"y":Y_COORD} (Click on the first video thumbnail coordinates from Vision)',
-    'Step 4: {"action":"nothing","reason":"Song is now playing"}'
+    'Step 1: {"action":"run","command":"start chrome"} (Opens/focuses Chrome physically)',
+    'Step 2: (Wait for Chrome to become active, AX Tree is auto-fetched)',
+    'Step 3: {"action":"hotkey","keys":["ctrl","l"]} (Focuses Chrome address bar and highlights current URL)',
+    'Step 4: {"action":"type","text":"https://www.youtube.com"} (Types the YouTube URL on screen key-by-key)',
+    'Step 5: {"action":"press","key":"enter"} (Presses Enter to navigate)',
+    'Step 6: (Wait for YouTube to load, AX Tree is auto-fetched)',
+    'Step 7: {"action":"uia_click","name":"Search"} (Physically glides cursor to YouTube search input and clicks it)',
+    'Step 8: {"action":"type","text":"SONG_NAME"} (Types the target song name with human speed delays)',
+    'Step 9: {"action":"press","key":"enter"} (Presses Enter to perform the search)',
+    'Step 10: (Wait for search results to load, AX Tree is auto-fetched)',
+    'Step 11: {"action":"scroll","x":960,"y":540,"direction":"down","amount":4} (Scrolls down visibly to browse matching videos)',
+    'Step 12: {"action":"uia_click","name":"VIDEO_TITLE"} (Clicks the matching video link from the AX Tree to play it)'
   ],
   "Search Google": [
-    'Step 1: {"action":"pinchtab_navigate","url":"https://www.google.com"}',
-    'Step 2: {"action":"request_vision"}',
-    'Step 3: {"action":"click","x":X_COORD,"y":Y_COORD} (Click on Google search input bar)',
-    'Step 4: {"action":"type","text":"QUERY"}',
-    'Step 5: {"action":"press","key":"enter"}'
+    'Step 1: {"action":"run","command":"start chrome"} (Opens/focuses Chrome physically)',
+    'Step 2: (Wait for Chrome to become active, AX Tree is auto-fetched)',
+    'Step 3: {"action":"hotkey","keys":["ctrl","l"]} (Focuses Chrome address bar)',
+    'Step 4: {"action":"type","text":"https://www.google.com"} (Types the Google URL)',
+    'Step 5: {"action":"press","key":"enter"} (Navigates to Google)',
+    'Step 6: (Wait for Google to load, AX Tree is auto-fetched)',
+    'Step 7: {"action":"uia_click","name":"Search"} (Physically glides cursor to Google search input and clicks it)',
+    'Step 8: {"action":"type","text":"QUERY"} (Types the query keyword key-by-key)',
+    'Step 9: {"action":"press","key":"enter"} (Presses Enter to search)'
   ],
   "Buka website": [
     'Step 1: {"action":"pinchtab_navigate","url":"https://example.com"}'
@@ -225,8 +237,19 @@ const MALAY = {
 const DECISION_TREE = `
 BEFORE choosing an action, follow this logic strictly:
 
-1. IS THIS A BROWSER/WEB TASK?
-   → Check DOM CONTEXT. If it contains "url" and "elements", you are in BROWSER MODE.
+0. HUMAN SIMULATION & VISUAL CONTROL MODE (PRIORITY FOR DEMONSTRATIONS)
+   → If the user expects a visible, human-like demonstration where they watch you operate the PC screen (e.g. "Buka youtube dan main lagu...", "Cari Google..."), or if UIA/desktop context is preferred to avoid silent actions:
+   → DO NOT use silent browser-level actions ("pinchtab_navigate", "pinchtab_click", "pinchtab_type").
+   → Instead, use OS-level desktop physical actions to simulate a human:
+     1. Open/Focus Chrome: Use {"action":"run","command":"start chrome"}.
+     2. Focus Address Bar: Use {"action":"hotkey","keys":["ctrl","l"]}.
+     3. Type URL/Search: Use {"action":"type","text":"URL_OR_SEARCH"}.
+     4. Press Enter: Use {"action":"press","key":"enter"}.
+     5. Glide and Click Elements: Use {"action":"uia_click","name":"Search"} (this physically glides the mouse pointer to the "Search" input or video title and clicks it).
+     6. Scroll down to browse: Use {"action":"scroll","x":960,"y":540,"direction":"down","amount":4}.
+
+1. IS THIS A BROWSER/WEB TASK (SILENT/BACKGROUND MODE)?
+   → Check DOM CONTEXT. If it contains "url" and "elements", and you are in silent/background mode:
    → Use "pinchtab_click" with the CSS selector from DOM CONTEXT to click elements.
    → Use "pinchtab_type" with the CSS selector to type into input fields.
    → Use "pinchtab_navigate" to open new URLs. DOM will be auto-fetched after navigation.
@@ -241,12 +264,12 @@ BEFORE choosing an action, follow this logic strictly:
    → NEVER call "request_vision" when AX Tree is available!
 
 3. TARGET NOT OPEN YET?
-   → For web pages: use "pinchtab_navigate" (DOM auto-fetched).
+   → For web pages: use "pinchtab_navigate" for background, or "run" command ("start chrome") for visual human mode.
    → For native apps: use "run" command (AX Tree auto-fetched).
 
 4. NO CONTEXT AVAILABLE?
    → If target app is already open in HISTORY, DO NOT run it again! Call "uia_get_ax_tree" instead.
-   → Use "pinchtab_navigate" for web, "run" for desktop. Context will be auto-fetched.
+   → Use "pinchtab_navigate" / "run" based on mode. Context will be auto-fetched.
    → ONLY use "request_vision" as absolute last resort when both DOM and AX Tree are empty and you need to interact with something already on screen.
 
 5. COMPLEX CODE AUTOMATION & SCRIPT GENERATION?
@@ -266,18 +289,19 @@ PRIORITY: DOM/AX Tree (instant, free) > Scripting (flexible, free) > Vision AI (
 // ── ABSOLUTE RULES ───────────────────────────────────────────
 const HARD_RULES = [
   "RESPOND WITH ONLY ONE JSON OBJECT containing both a 'thought' key and an 'action' key. No markdown blocks, no trailing text.",
-  "Your JSON output MUST look exactly like this: {\"thought\": \"your step by step thinking\", \"action\": \"pinchtab_click\", ...}",
+  "Your JSON output MUST look exactly like this: {\"thought\": \"your step by step thinking\", \"action\": \"uia_click\", ...}",
   "In the 'thought' key, you must perform step-by-step reasoning in Malay or English. Detail the active open windows, what has already been done in HISTORY, and what physical step you must execute next.",
   "You have full access to generate, write, and run custom scripts (Python, PowerShell) using 'write_file' and 'execute_script' to perform complex tasks.",
   "Self-Debugging Loop: If you run a command/script and receive [SYSTEM] feedback containing an ERROR or STDERR traceback, analyze it carefully, locate the bug, rewrite the corrected script using 'write_file', and execute it again.",
-  "For BROWSER tasks: Use pinchtab_click/pinchtab_type with CSS selectors from DOM CONTEXT. NEVER use request_vision.",
+  "When a human-like, visual browser demonstration is expected (such as playing YouTube songs or searching Google physically), you MUST use 'run', 'hotkey', 'type', 'uia_click', 'scroll', and 'press' to perform the steps visibly on the screen. Never use silent background 'pinchtab_navigate', 'pinchtab_click', or 'pinchtab_type' for these tasks, as they bypass the physical OS keyboard and mouse.",
+  "For silent BROWSER tasks: Use pinchtab_click/pinchtab_type with CSS selectors from DOM CONTEXT. NEVER use request_vision.",
   "For DESKTOP tasks: Use uia_click/uia_type with Name/AutomationId from AX TREE context. NEVER use request_vision when AX Tree is available.",
   "request_vision is LAST RESORT ONLY — for exotic apps with no DOM or AX Tree.",
   "NEVER repeat the same action you just did in HISTORY. If you already navigated to a URL, DO NOT navigate there again!",
   "If the target desktop application is already open in HISTORY, DO NOT use 'run' to open it again! If element layout is missing, execute 'uia_get_ax_tree' to get the layout elements.",
   "If the ACTIVE MISSION is already completed (e.g. you are already on the requested website), output the 'nothing' action immediately.",
-  "For YouTube searches, encode spaces as + in the URL query parameter.",
-  "To play a song on YouTube: navigate to the search results URL, wait for DOM, then pinchtab_click on the first video link.",
+  "For YouTube searches, encode spaces as + in the URL query parameter if using navigate, or type them directly if typing physically.",
+  "To play a song on YouTube physically: run 'start chrome', select address bar via 'ctrl+l', type YouTube's URL, press enter, wait for AX tree, uia_click the element named 'Search' or 'Search YouTube', type the song, press enter, scroll down, and uia_click the video title link.",
   "To type in Notepad: run notepad, wait for AX Tree, then uia_type with the text."
 ];
 
