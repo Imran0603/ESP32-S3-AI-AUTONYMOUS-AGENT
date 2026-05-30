@@ -698,7 +698,18 @@ def get_desktop_ax_tree():
         return ""
     
     try:
+        # SMART Chrome Focus: Jika Chrome ada tetapi tidak aktif di foreground, paksa aktifkan!
         fg = auto.GetForegroundControl()
+        is_chrome = fg and fg.Name and ("chrome" in fg.Name.lower() or "google chrome" in fg.Name.lower() or "youtube" in fg.Name.lower())
+        
+        if not is_chrome:
+            chrome_win = auto.WindowControl(searchDepth=1, ClassName='Chrome_WidgetWin_1')
+            if chrome_win.Exists(maxSearchSeconds=1):
+                print_log("Chrome window found in background. Bringing it to foreground...")
+                chrome_win.SetActive()
+                time.sleep(0.5)
+                fg = auto.GetForegroundControl()
+                
         if not fg or not fg.Name:
             return ""
         
@@ -932,7 +943,8 @@ def request_ax_tree():
         sio.emit("ax_tree_context", {"ax_tree": ax})
         print_log(f"AX Tree sent ({len(ax)} chars)")
     else:
-        print_log("AX Tree: no UIA data available (window may not support it)")
+        sio.emit("ax_tree_context", {"ax_tree": ""})
+        print_log("AX Tree: no UIA data available. Sent empty context to prevent server freeze.")
 
 @sio.event
 def download_loot():
