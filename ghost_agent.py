@@ -1096,6 +1096,7 @@ def on_set_screenshot_rate(data):
 
 @sio.event
 def execute_json_command(data):
+    global last_click_time
     print_log(f"JSON Command: {data}")
     try:
         action = data.get("action")
@@ -1320,7 +1321,6 @@ def execute_json_command(data):
                         el = fg.Control(Name=target_name, searchDepth=5)
                     
                     if el and el.Exists(maxSearchSeconds=2):
-                        global last_click_time
                         last_click_time = time.time()
                         el.Click(simulateMove=True)
                         print_log(f"UIA Click: {target_name or target_id}")
@@ -1407,17 +1407,14 @@ def execute_json_command(data):
 
         if action == "click" and x is not None and y is not None:
             human_move_to(x, y)
-            global last_click_time
             last_click_time = time.time()
             pyautogui.click()
         elif action == "right_click" and x is not None and y is not None:
             human_move_to(x, y)
-            global last_click_time
             last_click_time = time.time()
             pyautogui.rightClick()
         elif action == "double_click" and x is not None and y is not None:
             human_move_to(x, y)
-            global last_click_time
             last_click_time = time.time()
             pyautogui.doubleClick()
         elif action == "move" and x is not None and y is not None:
